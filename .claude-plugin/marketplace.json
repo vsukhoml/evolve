@@ -1,0 +1,31 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "vsukhoml",
+  "description": "Vadim Sukhomlinov's Claude Code plugins",
+  "owner": {
+    "name": "Vadim Sukhomlinov"
+  },
+  "plugins": [
+    {
+      "name": "evolve",
+      "source": "./",
+      "description": "Evolutionary code optimization with a measurement harness: design an experiment, run the search, and get a result you can verify",
+      "version": "0.1.0",
+      "author": {
+        "name": "Vadim Sukhomlinov"
+      },
+      "category": "development",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/vsukhoml/evolve",
+      "keywords": [
+        "optimization",
+        "benchmarking",
+        "evolutionary-search",
+        "performance",
+        "experiment-design",
+        "hill-climbing",
+        "alphaevolve"
+      ]
+    }
+  ]
+}

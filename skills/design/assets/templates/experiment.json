@@ -1,0 +1,125 @@
+{
+  "name": "REPLACE-with-a-short-slug",
+  "objective": "One sentence: what gets better, and for whom.",
+  "metric": "Exact number and units, negated if smaller is better (higher is always better).",
+  "metric_set": {
+    "_comment": "The request broken down. ONE fitness scalar (the `metric` above) plus everything the user would trade it against. Anything you would refuse to merge over belongs here and must be measured from the first candidate -- if it is only in your head, the search cannot see it.",
+    "fitness": "the scalar above; the only thing the loop maximizes",
+    "monitored": {
+      "accuracy": "REPLACE or delete: ULP / relative error, WORST case not mean. Mandatory if the candidate may reassociate, widen, narrow or approximate -- a search will find speed by spending precision",
+      "correctness_class": "exact | bit-identical | within-tolerance -- say which, and what enforces it",
+      "footprint": "REPLACE or delete: code size, .rodata, tables",
+      "memory": "REPLACE or delete: allocation count, peak, stack depth",
+      "maintainability": "REPLACE or delete: non-comment lines, function count, duplicated decision tables, number of code paths that must agree forever"
+    },
+    "guards": "metrics reported at weight 0.0 -- they catch regressions, they are not optimized",
+    "thresholds": "REPLACE: the bound on each monitored metric, and who owns the call when a candidate trades against it"
+  },
+  "contradiction": "improving X worsens Y \u2014 the central trade strategists will work",
+  "targets": [
+    "program/path/to/file"
+  ],
+  "source_map": {
+    "program/path/to/file": {
+      "file": "path/in/user/tree",
+      "lines": "start-end"
+    }
+  },
+  "invariants": [
+    "public function signatures unchanged",
+    "results identical to baseline on all test inputs"
+  ],
+  "correctness_gate": "REPLACE: the command that proves a candidate still works, run inside the candidate dir",
+  "gate_timeout_seconds": 600,
+  "abstraction": "solution | constructor | search-algorithm \u2014 and one line on why",
+  "evaluator": {
+    "_comment": "Either a flat command (below), or `stages` for an evaluation cascade.",
+    "stages": [
+      {
+        "name": "screen",
+        "command": [
+          "python3",
+          "evaluator/screen.py"
+        ],
+        "timeout_seconds": 60,
+        "repeats": 1,
+        "promote_if_score_at_least": null
+      },
+      {
+        "name": "full",
+        "command": [
+          "python3",
+          "evaluator/evaluate.py"
+        ],
+        "timeout_seconds": 300,
+        "repeats": 5
+      }
+    ]
+  },
+  "instruments": {
+    "_comment": "What the harness can measure BESIDES the fitness scalar, and which question each one settles. A strategist with a mechanism hypothesis should be able to read this and test it for pennies instead of spending a candidate. Delete what does not apply; add what does. Everything listed here should be recorded per candidate in the evaluator's `metrics` dict so the population can be correlated later.",
+    "timing": "the fitness metric, with spread and repeats",
+    "disassembly": "REPLACE or delete: e.g. objdump of the hot region; instructions and branches per unit of work. Settles 'did the change land at all'",
+    "static_uarch": "REPLACE or delete: e.g. llvm-mca on the hot loop. Settles latency-bound vs throughput-bound vs front-end-bound \u2014 usually the most valuable single fact, and expensive to infer from timing alone",
+    "counters": "REPLACE or delete: e.g. perf stat branch-misses, cache-misses, IPC",
+    "allocations": "REPLACE or delete: count and peak; mandatory for embedded/no_std/latency-sensitive targets",
+    "footprint": "REPLACE or delete: e.g. size -A for .text/.rodata. Distinguishes a free win from one bought with tables",
+    "build_matrix": "REPLACE or delete: other targets, opt levels, and the flags the product actually ships. A win at one flag combination is a fact about your build",
+    "noise_floor_cross_session": "the seed re-scored in a LATER session; usually wider than the back-to-back floor and the one to trust"
+  },
+  "tuning_plan": {
+    "_comment": "The triage of the change space, and how each half is searched. The LLM loop searches STRUCTURES; a script searches VALUES. Every axis of variation belongs to exactly one of them -- anything in neither list is the gap check 7 exists to catch. Reason about the response shape FIRST, then pick the method.",
+    "structural_only": [
+      {
+        "what": "REPLACE: the axis of variation that needs an LLM candidate",
+        "why_not_a_value": "REPLACE: one sentence. If you cannot write this sentence, it is probably parametric after all"
+      }
+    ],
+    "automated_search": {
+      "_comment": "Delete and set to null ONLY if nothing is parametric -- and then say why in structural_only. Runs BEFORE generation 1, and its winner is folded into the seed, so the loop starts from the best configuration of the current structure instead of rediscovering it.",
+      "space": "tuning/space.json",
+      "command": ["python3", "evaluator/eval_params.py"],
+      "method": "REPLACE: grid | random | coord | screening-then-narrow | bayesian | nsga-ii",
+      "sizing": "REPLACE with the arithmetic: axes x repeats x seconds-per-eval = wall clock. If the full grid fits, enumerate it -- exhaustive needs no assumptions and returns the whole surface. 'Too big' without this arithmetic means nobody did the arithmetic",
+      "run_before_generation_1": true,
+      "parameters": [
+        {
+          "name": "REPLACE: e.g. BLOCK_THRESHOLD",
+          "kind": "numeric | flag | build-setting | structural-choice | search-meta-parameter",
+          "domain": "REPLACE: range or set",
+          "expected_response": "REPLACE: monotonic | unimodal | multi-modal | step/threshold | interacting-with-X -- and WHY you think so",
+          "sensitivity_checked": "REPLACE: does sweeping the whole domain move the metric by more than the noise floor? If NO, the benchmark cannot tune this -- say so and argue the value from the input distribution instead of fitting noise",
+          "method": "binary/ternary search | full sweep | exhaustive | factorial grid | Latin hypercube | coordinate descent | Morris screening | Bayesian (GP/TPE) | CMA-ES | NSGA-II | GA",
+          "budget": "REPLACE: evaluations",
+          "validation": "REPLACE: tuned on which set, confirmed on which held-out set"
+        }
+      ]
+    },
+    "resolution": "the minimum detectable difference = the noise floor. You cannot tune finer than this; state it",
+    "multi_objective": "If objectives genuinely compete (speed vs size vs accuracy), return a Pareto front via NSGA-II rather than a scalarised single point, and let the owner pick",
+    "meta_parameters": "Do NOT tune the search's own knobs on the run you are reporting -- that fits the searcher to the instance. Use defaults and say so, or tune on a different problem"
+  },
+  "input_coverage": {
+    "_comment": "Filled during gate check 5. What the benchmark's inputs look like next to production's, and what the metric cannot see.",
+    "distribution_source": "REPLACE: where the real input distribution was measured, with n",
+    "shapes": "REPLACE: each scored shape, its weight, and the SOURCE of that weight (measured call frequency, or an explicit product decision)",
+    "guards": "REPLACE: shapes carried at weight 0.0 \u2014 reported, never scored. A shape that exists so something 'must not collapse' belongs here, not in the weighted metric",
+    "blind_spots": "REPLACE: input families the metric does NOT contain, named explicitly so they stop being invisible"
+  },
+  "baseline_score": null,
+  "noise_floor": null,
+  "interpretation": {
+    "smallest_gain_worth_acting_on": null,
+    "success": "gain > noise floor, holds on held-out and on the worst input shape",
+    "non_result": "gain inside the noise floor \u2014 report and stop, do not rerun hoping",
+    "abandon_if": "state the condition now, before anyone has seen a number"
+  },
+  "risks": [
+    "from the pre-mortem: what would make this run worthless three days from now"
+  ],
+  "budget": {
+    "max_candidates": 40,
+    "parallel": 3
+  },
+  "notes": "Where held-out inputs live, what a cheating solution would look like, anything the next reader needs."
+}
