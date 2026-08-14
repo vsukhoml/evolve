@@ -32,7 +32,9 @@ own copy of `.ae/`, taken when it was created, so a directory built before a
 skill update silently lacks whatever the current instructions assume. Diff it:
 
 ```bash
-AE=$(find ~/.claude/plugins -path '*evolve*/skills/design/assets/ae' -type d | head -1)
+AE=$(find ~/.claude/plugins ~/.gemini/config/plugins ~/.codex/plugins \
+       ~/.grok/plugins .agents/plugins -path '*evolve*/skills/design/assets/ae' \
+       -type d 2>/dev/null | head -1)
 diff -q "$AE" .ae/
 ```
 
@@ -109,6 +111,23 @@ does not** - `evolve_run.py` holds a per-experiment lock while it scores,
 because three benchmarks racing on one machine are timing each other's cache
 pressure. Spawn all the implementers at once; their scoring calls queue on their
 own.
+
+**The lock is also machine-wide, across experiments - with two modes.** A
+per-experiment lock cannot see a second experiment (or a `tune.py` sweep)
+measuring on the same box, and two *timed* measurements running at once corrupt
+both silently - both complete, both record numbers, both sets of numbers are
+wrong, multithreaded benchmarks worst of all. So timed stages hold the machine
+**exclusively**, one at a time across all experiments, while untimed work -
+correctness gates, untimed screen stages, whole experiments declared
+`"measurement": {"machine_exclusive": false}` - runs under a **shared** lock:
+any amount in parallel with each other, but never during someone's exclusive
+measurement, because untimed work still costs cores. The design skill's
+parallelism plan decides which stage is which. Never launch a second timed
+experiment on the same machine expecting parallel throughput - its timed stages
+will queue, and that is the guardrail working; the untimed parts of both runs
+interleave freely. And on a whole-machine benchmark, remember the lock covers
+*measurement* only: implementers compiling in parallel still cost cores, so drop
+`parallel` to 1-2 rather than trusting the lock alone.
 
 ### 1. Select parents
 
@@ -282,13 +301,16 @@ roughly nineteen times out of twenty. Check that one before celebrating it.
 **The reviewer is a low-recall instrument, not a judgement.** Repeat passes on
 the same material rarely surface the same findings, its stated confidence
 measures nothing, and at that recall "the reviewer found nothing" is close to no
-information. So for a verdict that matters - the winner, a candidate about to
-merge - run it two or three times independently and take the union of findings,
-and report silence as "one low-recall pass found nothing", never as a clean
-bill. Measure it once, cheaply, with planted defects: an uncalibrated reviewer
-is the run's single largest unmeasured risk, because every other instrument has
-a noise floor attached and this one does not. The numbers behind these rules and
-the planted-error procedure are in `references/agent_briefs.md` § *Reviewer
+information. Verdicts are also asymmetric: a *reject* is real signal, an
+*accept* is close to silence. So for a verdict that matters - the winner, a
+candidate about to merge - run it two or three times independently, at least one
+pass from a **different model** (a second model's critique is informative
+exactly where self-review is not), and take the union of findings, and report
+silence as "one low-recall pass found nothing", never as a clean bill. Measure
+it once, cheaply, with planted defects: an uncalibrated reviewer is the run's
+single largest unmeasured risk, because every other instrument has a noise floor
+attached and this one does not. The numbers behind these rules and the
+planted-error procedure are in `references/agent_briefs.md` § *Reviewer
 calibration*.
 
 Falsification deserves the same first-class standing on the generate side - it

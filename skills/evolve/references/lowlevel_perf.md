@@ -168,13 +168,21 @@ Relevant only when the evolve block includes an interface:
 
 No hotspot is not "nothing to do" - it narrows the strategy set:
 
+- **Blame the application-level caller, not the shared leaf.** Cycles land in
+  `memcpy`, `push_back`, the allocator - shared functions nobody should optimize
+  at that level. Re-attribute their cost upward to the nearest
+  application-specific caller before picking targets: that is where the
+  unnecessary copy or the missing `reserve` actually lives.
+
 - **Stack many small wins** - twenty 1% improvements compound, but only when the
   noise floor can resolve 1%, which is a statement about the harness
   (`perf_harnesses.md`), not the ideas. If it cannot, fix the measurement before
   proposing anything.
+
 - **Climb the call stack** - flame graphs find the loop three frames up whose
   restructuring (build the structure in one shot instead of incrementally)
   removes the flatness wholesale.
+
 - **Profile allocations and cache misses, not just CPU time** - the top
   allocator client and the worst-missing function are hotspots the time profile
   hides.

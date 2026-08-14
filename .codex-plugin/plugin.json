@@ -1,0 +1,37 @@
+{
+  "name": "evolve",
+  "version": "0.1.1",
+  "description": "Evolutionary code optimization with a measurement harness: design an experiment, run the search, and get a result you can verify",
+  "author": {
+    "name": "Vadim Sukhomlinov"
+  },
+  "homepage": "https://github.com/vsukhoml/evolve",
+  "repository": "https://github.com/vsukhoml/evolve",
+  "license": "Apache-2.0",
+  "keywords": [
+    "optimization",
+    "benchmarking",
+    "evolutionary-search",
+    "performance",
+    "experiment-design",
+    "hill-climbing",
+    "alphaevolve"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Evolve",
+    "shortDescription": "Defensible evolutionary code optimization",
+    "longDescription": "Five skills that turn \"make this faster\" into a result you can defend: an experiment directory with a validated measurement harness, an evolutionary search that runs against it, and a final report where every number is re-derivable from a stored artifact.",
+    "developerName": "Vadim Sukhomlinov",
+    "category": "Development",
+    "capabilities": [
+      "Instructions"
+    ],
+    "websiteURL": "https://github.com/vsukhoml/evolve",
+    "defaultPrompt": [
+      "Design an experiment to optimize this function.",
+      "Is this optimization result real or noise?",
+      "Run the experiment for 10 more generations."
+    ]
+  }
+}

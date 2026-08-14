@@ -28,24 +28,69 @@ required.
 
 ### Google Antigravity
 
-Copy or clone into your machine-global or project-local customization directory:
+The repo root is itself a valid Antigravity plugin (root `plugin.json` marker
+plus `skills/<name>/SKILL.md`, which is Antigravity's native skill format), so
+installation is a straight copy into a scanned plugin location:
 
-**Global (all projects):**
+**Global (all workspaces):**
 
 ```bash
 mkdir -p ~/.gemini/config/plugins/evolve
 cp -r * ~/.gemini/config/plugins/evolve/
 ```
 
-**Project-local (current repository):**
-
-```bash
-mkdir -p .agents/plugins/evolve
-cp -r * .agents/plugins/evolve/
-```
+**Workspace-local:** the same copy into `.agents/plugins/evolve/` (or
+`_agents/plugins/evolve/`) at the workspace root.
 
 Or copy `skills/*` directly into `~/.gemini/config/skills/` or
-`.agents/skills/`.
+`.agents/skills/`. The repo also ships `gemini-extension.json`, so
+`gemini extensions install https://github.com/vsukhoml/evolve` works in the
+Gemini CLI.
+
+### Codex / ChatGPT
+
+Add the repo as a plugin marketplace, then install from the Plugins Directory in
+the ChatGPT desktop app (or `codex plugin add evolve@vsukhoml` where the CLI
+supports direct installs):
+
+```
+codex plugin marketplace add vsukhoml/evolve
+```
+
+The repo carries both marketplace forms Codex reads - the native
+`.agents/plugins/marketplace.json` and the legacy-compatible
+`.claude-plugin/marketplace.json` - and `.codex-plugin/plugin.json` points at
+the same `skills/` directory every other platform uses. On Codex variants
+without plugin support, `AGENTS.md` at the repo root is picked up as project
+context - see "Any other agent" below.
+
+### Grok
+
+```
+grok plugin install vsukhoml/evolve --trust
+```
+
+then enable it in `~/.grok/config.toml`:
+
+```toml
+[plugins]
+enabled = ["evolve"]
+```
+
+### Devin
+
+```
+devin plugins install vsukhoml/evolve
+```
+
+### Any other agent (instruction-only)
+
+The skills are plain markdown and the harness is stdlib Python, so no plugin
+machinery is actually required. Clone the repo (or vendor it into the project)
+and point the agent at `AGENTS.md` in the repo root - it routes requests to the
+right `skills/*/SKILL.md` and explains how to find the harness. For platforms
+with an always-on rules file (Cursor, Windsurf, Cline, Copilot instructions,
+Zed, Jules, Amp, ...), copy or reference `AGENTS.md` from there.
 
 **Requirements:** Python 3 standard library only. No API keys, no external
 services, nothing to install. The harness scripts (`evolve_db.py`,
@@ -281,6 +326,36 @@ rules here, from a run big enough to price them:
   agents read it as threshold-shaped, and a mid-run human restatement was needed
   - the framing reference's threshold-or-frontier question.
 
+### [ECO - An LLM-Driven Efficient Code Optimizer for Warehouse Scale Computers](https://arxiv.org/abs/2503.15669) (Google, 2025) - arXiv:2503.15669
+
+The breadth-first complement to this plugin's depth-first search: instead of
+searching for novel optimizations on one hot target, ECO mines decades of
+historical performance commits into a dictionary of anti-patterns (unnecessary
+copies, redundant map lookups, missing reserves, missing moves, needless
+sorts/allocations), finds new instances across billions of lines via embedding
+retrieval over a fleet-profiler-filtered search space, and applies the
+catalogued fix with a fine-tuned LLM - >6.4k submitted commits, >99.5%
+production success rate, savings equivalent to 500k+ normalized cores per
+quarter, \<0.5% reverted under post-submit profiler monitoring. What the skills
+borrow:
+
+- **The anti-pattern scan of the seed** (design's prior-art section): most fleet
+  savings came from *known* fixes, so a depth-first run folds the catalogued
+  ones into its baseline before spending candidates on novelty.
+- **Conservative-edit selection** (the implementer brief): across their
+  benchmarks the most conservative valid edit met or beat the median speedup of
+  five samples in nearly all cases, while chain-of-thought prompting produced
+  the largest diffs and the most invalid ones - hence "the smallest edit that
+  implements the strategy".
+- **Cycle re-attribution** (`lowlevel_perf.md` § flat profiles): the profiler
+  blames shared leaves (`push_back`, allocator); ECO re-attributes cost to the
+  nearest application-specific caller (their C_min 0.1% / C_max 25% pruning),
+  which is where the fixable anti-pattern actually lives.
+- Their verification ladder - build + tests, automated trivial fixes, LLM
+  self-review before human review, post-submit monitoring with cheap revert - is
+  the reviewer-plus-closing-ritual shape, deployed; corroborates the
+  ship-confirmed-wins-early rule rather than adding a new one.
+
 ### Sakana AI - The AI Scientist
 
 - **[v1](https://arxiv.org/abs/2408.06292)** (arXiv:2408.06292): idea generation
@@ -317,7 +392,7 @@ rules here, from a run big enough to price them:
 
 The systems above are read for design ideas; none of them is a dependency. This
 plugin has **no external API dependency, no hosted service, and no API keys**
-beyond the Claude Code session itself. The harness scripts (`evolve_db.py`,
+beyond the LLM Agent session itself. The harness scripts (`evolve_db.py`,
 `evolve_run.py`, `evolve_report.py`, `tune.py`) are **Python 3 standard library
 only**, and they are copied into each experiment directory, so an experiment
 stays runnable and inspectable after the plugin is gone.
@@ -619,6 +694,20 @@ them.
   (HuggingFace `BGPT-OFFICIAL/refute`), Dataset covering falsification,
   overclaims, missing-evidence refusal and planted-flaw detection - a source of
   defect classes if three or four are not enough for reviewer calibration
+- **[TCS-BENCH](https://arxiv.org/abs/2608.09538)**, Cohen-Addad et al. 2026,
+  arXiv:2608.09538 - research-level proof generation with a calibrated automated
+  verifier (>90% agreement with experts, from 50 correct + 50 incorrect
+  human-labeled proofs - the planted-error construction at benchmark scale). The
+  numbers behind two reviewer rules: **verdict asymmetry** - self-acceptance
+  carried almost no information (93.4% of self-accepted proofs drew unanimous
+  re-acceptance) while routing on self-rejection alone lifted accuracy 54.0% →
+  63.7%; and **cross-model critique** - a second model's judgement discriminated
+  at 0.854 AUC exactly where self-verification failed, lifting accuracy to 67.7%
+  (oracle 72.3%), with the judging *direction* mattering far more than the
+  acceptance threshold (the cheap model judging the strong one worked; the
+  reverse, 0.637 AUC, did not). Hence: act on rejects, discount accepts, make
+  one reviewer pass cross-model, and calibrate the direction instead of assuming
+  the stronger model judges better
 
 ### Tools named in the skills
 

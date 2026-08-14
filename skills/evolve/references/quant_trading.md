@@ -30,9 +30,9 @@ supply of independent evidence, and it does not refill.
   spent even if the machine is idle.
 - **The run knows its own trial count.** `evolution.json` records every
   candidate ever scored - including failures and screened-out ones - which is
-  exactly the N the max-of-N correction needs and that manual research never has.
-  Use the recorded count, bracketed by lineages as the selection-bias
-  rules prescribe, and discount the winner's score by it at the closing ritual
+  exactly the N the max-of-N correction needs and that manual research never
+  has. Use the recorded count, bracketed by lineages as the selection-bias rules
+  prescribe, and discount the winner's score by it at the closing ritual
   (`fitness_design.md` § *Selection bias*).
 - **Reserve a final out-of-sample window before generation 1** - the most recent
   segment is the pragmatic choice - and touch it exactly once, at the close. A

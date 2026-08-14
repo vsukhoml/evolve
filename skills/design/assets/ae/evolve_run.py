@@ -95,20 +95,27 @@ def run(cmd, cwd, timeout) -> tuple[int, str, str, float]:
         return 127, "", f"{exc}", time.monotonic() - started
 
 
-def acquire_measurement_lock(experiment: str):
-    """Serialize the measured section across parallel candidates.
+def machine_lock_path() -> str:
+    """One lock file per user in the system temp dir, shared by every
+    experiment and every tune.py sweep this user runs on the machine. Two
+    users benchmarking one box still have to talk to each other."""
+    return os.path.join(tempfile.gettempdir(), f"evolve-measure-{os.getuid()}.lock")
 
-    Strategists and implementers parallelize fine, but three benchmarks racing
-    on one machine are timing each other's cache pressure, and the scores stop
-    being comparable candidate-to-candidate. The lock is held through the gate,
-    the evaluation, the snapshot and the database append --- the last of which
-    also closes the load-modify-save race between two candidates finishing at
-    the same moment. Released automatically when the process exits."""
+
+def acquire_experiment_lock(experiment: str):
+    """Serialize this experiment's candidates against each other.
+
+    Strategists and implementers parallelize fine, but benchmarks racing are
+    timing each other's cache pressure, and the scores stop being comparable
+    candidate-to-candidate. Held through the gate, the evaluation, the
+    snapshot and the database append --- the last of which also closes the
+    load-modify-save race between two candidates finishing at the same
+    moment. The handle is returned so it outlives this function; the lock
+    releases when the process exits."""
     if fcntl is None:
         return None
-    # noqa SIM115: deliberately not a context manager --- the handle must outlive
-    # this function and stay open until the process exits, or the lock releases
-    # while the measurement is still running.
+    # noqa SIM115: deliberately not a context manager --- the handle must
+    # outlive this function, or the lock releases mid-measurement.
     fh = open(os.path.join(experiment, ".ae-lock"), "w")  # noqa: SIM115
     try:
         fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -116,6 +123,67 @@ def acquire_measurement_lock(experiment: str):
         print("waiting for another candidate's measurement to finish...", file=sys.stderr)
         fcntl.flock(fh, fcntl.LOCK_EX)
     return fh
+
+
+class MachineLock:
+    """The machine-wide measurement lock, with reader-writer semantics.
+
+    The per-experiment lock cannot see a SECOND experiment. Two performance
+    runs measuring at once time each other's cache pressure and thermal
+    state, and a multithreaded benchmark contends for every core on the box.
+    The corruption is silent --- both runs complete, both record numbers,
+    both sets of numbers are wrong --- and it was observed in practice,
+    which is why this is a lock and not a paragraph of advice.
+
+    Not all evaluation is timing, though, and flock gives the honest split
+    for free:
+
+      exclusive (LOCK_EX) --- anything timed. One holder on the machine.
+      shared    (LOCK_SH) --- anything untimed: correctness gates, numerical
+        accuracy, code size, output quality. Any number run together, but
+        all of them wait while an exclusive holder measures, and an
+        exclusive measurement waits until they finish --- untimed work is
+        parallel-safe against itself, never against someone's benchmark,
+        because it still costs cores.
+
+    Which mode a stage gets is planned in experiment.json at design time:
+    `measurement.machine_exclusive` (default true) sets the experiment's
+    default, and a cascade stage may override with its own
+    `machine_exclusive` --- the common shape being an untimed correctness
+    screen that runs shared while only the timed final stage serializes.
+    The correctness gate always runs shared: its output is pass/fail, not a
+    number.
+
+    Mode changes release and reacquire (flock upgrades can deadlock); the
+    gap between stages is a safe place to lose the lock. Lock order is
+    fixed --- experiment first, then machine --- and tune.py takes only the
+    machine lock, so the two cannot deadlock. Per user, in the system temp
+    dir: two users benchmarking one box still have to talk to each other."""
+
+    def __init__(self) -> None:
+        self.fh = None
+        self.mode = None
+
+    def ensure(self, exclusive: bool) -> None:
+        if fcntl is None:
+            return
+        want = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+        if self.fh is not None and self.mode == want:
+            return
+        self.release()
+        fh = open(machine_lock_path(), "w")  # noqa: SIM115 --- held across stages
+        try:
+            fcntl.flock(fh, want | fcntl.LOCK_NB)
+        except OSError:
+            kind = "exclusively" if exclusive else "for shared use"
+            print(f"waiting to hold the machine {kind} (another measurement is running)...", file=sys.stderr)
+            fcntl.flock(fh, want)
+        self.fh, self.mode = fh, want
+
+    def release(self) -> None:
+        if self.fh is not None:
+            self.fh.close()
+            self.fh, self.mode = None, None
 
 
 def check_gate(spec: dict, candidate_dir: str, insights: list) -> bool:
@@ -145,7 +213,7 @@ def stages_of(spec: dict) -> list[dict]:
 
 
 def run_cascade(
-    spec: dict, experiment: str, candidate_dir: str, insights: list
+    spec: dict, experiment: str, candidate_dir: str, insights: list, mlock: MachineLock
 ) -> tuple[float | None, dict, str, dict | None]:
     """Evaluate through stages of increasing cost, stopping at the first refusal.
 
@@ -165,6 +233,7 @@ def run_cascade(
     # stages are filters, and screening stages routinely measure a cheaper
     # proxy that has no business on the Pareto front.
     axes = evolve_db.objective_axes(spec)
+    default_exclusive = (spec.get("measurement") or {}).get("machine_exclusive", True)
     metrics: dict = {}
     score: float | None = None
     objectives: dict | None = None
@@ -172,6 +241,7 @@ def run_cascade(
     for i, stage in enumerate(stages):
         name = stage.get("name") or f"stage{i}"
         is_last = i == len(stages) - 1
+        mlock.ensure(exclusive=bool(stage.get("machine_exclusive", default_exclusive)))
         score, stage_metrics, objectives = run_stage(
             stage, name, experiment, candidate_dir, insights, axes if is_last else []
         )
@@ -364,19 +434,25 @@ def main() -> None:
     valid = True
 
     # Held until process exit: gate, evaluation, snapshot, database append.
-    _lock = acquire_measurement_lock(args.experiment)  # noqa: F841
+    _exp_lock = acquire_experiment_lock(args.experiment)  # noqa: F841
+    mlock = MachineLock()
 
     if args.skip_gate:
         insights.append({"label": "correctness_gate", "text": f"SKIPPED: {args.note or 'no reason given'}"})
-    elif not check_gate(spec, args.candidate_dir, insights):
-        valid = False
+    else:
+        # The gate is untimed (pass/fail), so it runs shared: parallel with
+        # other untimed work, never during someone's exclusive measurement.
+        mlock.ensure(exclusive=False)
+        if not check_gate(spec, args.candidate_dir, insights):
+            valid = False
 
     metrics: dict = {}
     objectives: dict | None = None
     status = "gate_failed" if not valid else "pending"
     if valid:
-        score, metrics, status, objectives = run_cascade(spec, args.experiment, args.candidate_dir, insights)
+        score, metrics, status, objectives = run_cascade(spec, args.experiment, args.candidate_dir, insights, mlock)
         valid = score is not None
+    mlock.release()
 
     strategy = ""
     if args.strategy_file and os.path.exists(args.strategy_file):

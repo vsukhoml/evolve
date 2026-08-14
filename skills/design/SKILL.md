@@ -503,6 +503,18 @@ Seed `seed_strategies.md` from what you find, one entry per technique, each
 citing its source and saying explicitly what would have to be true for it to
 transfer here. Those become generation 1's proposals instead of guesses.
 
+**And scan the seed for catalogued anti-patterns before generation 1.** A
+deployed fleet-scale optimizer (provenance in the README) earns most of its
+savings not from novel optimizations but from finding *known* anti-patterns -
+unnecessary copies, redundant map lookups, missing reserves, missing moves,
+needless allocations - and applying the catalogued fix. Walk the evolve block
+against the menus in `skills/evolve/references/lowlevel_perf.md` and fold the
+obvious catalogued fixes into the seed, exactly as the parameter sweep's winner
+is folded in and for the same reason: a candidate compared against a seed still
+carrying textbook anti-patterns is confounded - part of its "win" is a fix any
+structure would have enjoyed - and the loop otherwise spends agent turns
+rediscovering what a checklist already knew.
+
 ### Pre-register the interpretation
 
 Before any code, write down what each possible outcome will mean - what counts
@@ -572,6 +584,27 @@ Write the spec, echo it back in two or three lines, and move on.
 `tuning_plan` is not optional. If the triage found nothing parametric,
 `automated_search` is `null` and `structural_only` carries the reason - an
 absent key reads as a step nobody did.
+
+`measurement` is optional and is where the **parallelism plan** lives. Classify
+every piece of the evaluation at design time - it decides both the lock modes
+and how much the budget's `parallel` actually buys:
+
+- **Timed** (wall clock, cycles, latency, throughput) - machine-exclusive. Two
+  timed measurements on one machine corrupt each other silently, multithreaded
+  benchmarks worst of all. One at a time, machine-wide; the harness enforces it.
+- **Untimed** (numerical accuracy, code size, output quality, feasibility, the
+  correctness gate) - parallel-safe *against each other*, never against a timed
+  measurement: untimed work still costs cores. These run under a shared lock -
+  any number together, all waiting while someone times.
+
+`"measurement": {"machine_exclusive": false, "why": "..."}` declares the whole
+experiment untimed (everything runs shared - say why). With a cascade, plan per
+stage: an untimed correctness screen carries `"machine_exclusive": false` in its
+stage entry and runs shared in parallel, while only the timed final stage takes
+the exclusive lock. That is where cascade parallelism pays: for an untimed
+experiment `parallel` scales almost linearly; for a timed one it only
+parallelizes strategists, implementers, gates, and screens, and the timed stage
+always queues.
 
 `objectives` is optional and declares a multi-objective experiment:
 
@@ -710,7 +743,9 @@ run - this is the one cascade failure that leaves no evidence behind.
 
 ```bash
 mkdir -p <experiment>/{program,evaluator,generations}
-AE=$(find ~/.claude/plugins -path '*evolve*/skills/design/assets/ae' -type d | head -1)
+AE=$(find ~/.claude/plugins ~/.gemini/config/plugins ~/.codex/plugins \
+       ~/.grok/plugins .agents/plugins -path '*evolve*/skills/design/assets/ae' \
+       -type d 2>/dev/null | head -1)
 cp -r "$AE" <experiment>/.ae
 python3 <experiment>/.ae/evolve_db.py init --experiment <experiment>
 ```
@@ -903,6 +938,11 @@ ______________________________________________________________________
 - **Absolute paths in the harness.** Candidates are evaluated in copies;
   anything absolute points back at the original and measures the wrong code.
 - **The gate is inside the evolve block.** Then it is not a gate.
+- **Two performance experiments measure on one machine at once.** The harness's
+  machine-wide lock queues them by default; the failure returns the moment
+  someone opts out casually or benchmarks outside `evolve_run.py` / `tune.py`.
+  Opting out is for metrics with no timing in them, never a throughput
+  optimization.
 - **Benchmark inputs are constants.** Randomize what you can per evaluation and
   hold out a second set the run never sees, or the loop will find your inputs
   rather than a better algorithm.

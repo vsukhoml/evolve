@@ -125,6 +125,12 @@ STEPS:
    evaluator, the benchmark data, the correctness gate - is off limits. A
    candidate that edits its own examiner is an automatic reject, and it will
    score beautifully, which is exactly why the rule is absolute.
+   Make the SMALLEST edit that implements the strategy - ambition belongs in
+   the strategy, the diff should be exactly it. In a deployed system's
+   measurements the most conservative valid edit met or beat the median
+   speedup of repeated attempts in nearly every case, while the most
+   elaborate generations produced the largest diffs and the most invalid
+   ones.
 3. Score it through the harness, never by running the code yourself:
    python3 [experiment]/.ae/evolve_run.py --experiment [experiment] \
      --candidate-dir [candidate_dir] --id [id] --parent [parent_id] \
@@ -226,6 +232,23 @@ model":
 - **Low recall means silence is not clearance.** At that recall, "the reviewer
   found nothing" is close to no information. Never report it as a clean bill;
   report it as "one low-recall pass found nothing".
+
+**Verdicts are asymmetric: a reject is signal, an accept is near-silence.**
+Measured on research-level proof verification, a model's self-*acceptance*
+carried almost no information - 93.4% of self-accepted outputs drew unanimous
+acceptance on repeat runs, leaving the signal nothing to distinguish - while
+routing decisions on self-*rejection* alone lifted end-to-end accuracy from 54%
+to 64%. Weight your reviewer's verdicts the same way: act on rejects, and treat
+accepts as one more low-recall pass that found nothing.
+
+**Make at least one pass cross-model.** The same study found a second model's
+critique separates good from bad output precisely where self-review fails
+(discriminating at 0.85 AUC against a near-uninformative self-acceptance
+signal), and the *direction* mattered more than any threshold - a cheaper model
+judging the stronger one discriminated well, the reverse poorly. When a verdict
+matters, draw the union across passes from at least two models, and use the
+planted-error calibration below to measure which judging direction actually
+discriminates, rather than assuming the stronger model judges better.
 
 **Measure it once, cheaply, with planted errors.** Take a scored candidate,
 inject a defect of a kind that matters here (an off-by-one in a load-bearing

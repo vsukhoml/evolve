@@ -1,0 +1,17 @@
+{
+  "name": "evolve",
+  "description": "Evolutionary code optimization with a measurement harness",
+  "owner": {
+    "name": "Vadim Sukhomlinov",
+    "url": "https://github.com/vsukhoml"
+  },
+  "plugins": [
+    {
+      "name": "evolve",
+      "description": "Evolutionary code optimization with a measurement harness: design an experiment, run the search, and get a result you can verify",
+      "version": "0.1.1",
+      "source": "./",
+      "category": "development"
+    }
+  ]
+}

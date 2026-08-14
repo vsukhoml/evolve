@@ -201,8 +201,8 @@ into a sub-1% one - the difference between an experiment that can resolve a real
 silently favours whichever candidates ran while the box was cold, so part of
 every score is a timestamp.
 
-State the noise floor in every result you report. "+3.1% (noise floor ±4%)" is
-a real non-result; "+3.1%" is a claim you cannot defend.
+State the noise floor in every result you report. "+3.1% (noise floor ±4%)" is a
+real non-result; "+3.1%" is a claim you cannot defend.
 
 **The floor also sizes the budget, before any of it is spent.** The spread of a
 median shrinks roughly as 1/√repeats, so resolving the smallest gain worth

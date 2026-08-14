@@ -106,9 +106,9 @@ space is genuinely unmapped. The published wins of this method are all that
 shape: matrix-multiplication schedules, packing constructions, scheduling
 heuristics, kernel tuning.
 
-**Quote the real ceiling.** An agent-driven loop like this one is right for
-tens to low hundreds of evaluations. Anything that needs thousands wants a
-different instrument - a standalone parameter search, or a hosted system with an
+**Quote the real ceiling.** An agent-driven loop like this one is right for tens
+to low hundreds of evaluations. Anything that needs thousands wants a different
+instrument - a standalone parameter search, or a hosted system with an
 industrial compute budget behind it.
 
 ## Two regimes, which are often confused

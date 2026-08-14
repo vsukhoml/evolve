@@ -1,0 +1,36 @@
+# Lint config for the bundled Python harness (skills/design/assets/).
+# The harness is stdlib-only and gets copied verbatim into every experiment
+# directory, so it has to be correct without a dependency to lean on.
+#
+# Lint only. Formatting is by hand and stays that way: layout here is chosen for
+# readability -- aligned comment columns in the docs' examples, log() calls and
+# dict literals laid out to read as one statement -- and `ruff format` reflows
+# all of it. build.sh does not check formatting for that reason.
+#
+# Run:  uvx ruff check .        (uvx is already on PATH; no install needed)
+
+line-length = 100
+target-version = "py310"   # PEP 604 unions are used throughout
+
+[lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "W",    # pycodestyle warnings
+    "I",    # isort
+    "UP",   # pyupgrade — keep the 3.10+ idioms consistent
+    "B",    # bugbear
+    "SIM",  # simplify
+    "BLE",  # blind-except — the evaluator's broad catch is deliberate and noqa'd
+    "RUF",
+]
+ignore = [
+    "E501",    # line length is advisory here; long prose in docstrings is intentional
+    "RUF100",  # keep defensive `# noqa: E402/F841` even where ruff doesn't need them
+]
+
+[lint.isort]
+known-first-party = []
+
+# No [format] section on purpose. `ruff format` is not part of any workflow
+# here; `./build.sh fmt` exists only as a deliberate escape hatch.

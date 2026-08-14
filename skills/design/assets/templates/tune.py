@@ -63,6 +63,11 @@ import sys
 import tempfile
 import time
 
+try:
+    import fcntl
+except ImportError:  # non-POSIX platform: no lock, measurements may interleave
+    fcntl = None
+
 STOP = False
 
 
@@ -100,6 +105,37 @@ def expand(space: dict) -> tuple[list[str], list[list]]:
 def key_of(point: dict) -> str:
     """Stable identity for a point, so resume can skip what is already measured."""
     return json.dumps(point, sort_keys=True, default=str)
+
+
+def machine_lock(mode: str):
+    """The same machine-wide measurement lock `evolve_run.py` takes, held for
+    one point's measurement at a time.
+
+    A sweep timing candidates while an evolution loop (or a second sweep)
+    measures on the same machine corrupts both silently --- especially
+    multithreaded benchmarks, which contend for every core. Per-point
+    granularity lets a sweep and a loop interleave instead of starving each
+    other. Modes, matching the loop's reader-writer semantics:
+
+      exclusive -- the evaluator times something. One holder on the machine.
+      shared    -- untimed metrics (numerics, code size, output quality):
+                   any number run together, but all wait while an exclusive
+                   holder measures --- untimed work still costs cores.
+      none      -- no lock at all; only for evaluators that neither time
+                   anything nor load the machine enough to matter.
+
+    Closing the returned handle releases the lock."""
+    if mode == "none" or fcntl is None:
+        return None
+    path = os.path.join(tempfile.gettempdir(), f"evolve-measure-{os.getuid()}.lock")
+    want = fcntl.LOCK_EX if mode == "exclusive" else fcntl.LOCK_SH
+    fh = open(path, "w")  # noqa: SIM115 --- caller controls the hold duration
+    try:
+        fcntl.flock(fh, want | fcntl.LOCK_NB)
+    except OSError:
+        log(f"waiting for the machine measurement lock ({mode}; another benchmark is running)")
+        fcntl.flock(fh, want)
+    return fh
 
 
 def measure(command: list[str], point: dict, repeats: int, workdir: str) -> tuple[float | None, dict]:
@@ -176,6 +212,9 @@ def main() -> None:
                     help="stop after N consecutive evaluations with no improvement above the floor (0 = never)")
     ap.add_argument("--max-seconds", type=float, default=0.0, help="wall-clock cap (0 = none)")
     ap.add_argument("--seed", type=int, default=42, help="recorded, so the run is reproducible")
+    ap.add_argument("--machine-lock", choices=["exclusive", "shared", "none"], default="exclusive",
+                    help="machine-wide measurement lock mode: exclusive for timed metrics (default), "
+                    "shared for untimed ones, none only when the evaluator barely loads the machine")
     args = ap.parse_args()
 
     signal.signal(signal.SIGINT, _stop)
@@ -225,7 +264,12 @@ def main() -> None:
                 continue
 
             t0 = time.time()
-            score, metrics = measure(args.command.split(), point, args.repeats, args.out)
+            lock = machine_lock(args.machine_lock)
+            try:
+                score, metrics = measure(args.command.split(), point, args.repeats, args.out)
+            finally:
+                if lock:
+                    lock.close()
             evaluated += 1
             row = {"point": point, "score": score, "metrics": metrics,
                    "seconds": round(time.time() - t0, 3), "at": time.strftime("%Y-%m-%dT%H:%M:%S")}

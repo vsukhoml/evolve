@@ -1,0 +1,20 @@
+{
+  "name": "vsukhoml",
+  "interface": {
+    "displayName": "Vadim Sukhomlinov's plugins"
+  },
+  "plugins": [
+    {
+      "name": "evolve",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Development"
+    }
+  ]
+}
