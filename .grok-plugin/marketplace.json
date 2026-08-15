@@ -9,7 +9,7 @@
     {
       "name": "evolve",
       "description": "Evolutionary code optimization with a measurement harness: design an experiment, run the search, and get a result you can verify",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "source": "./",
       "category": "development"
     }

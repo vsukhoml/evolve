@@ -4,9 +4,10 @@ You are reading the universal adapter for the `evolve` plugin: five skills that
 turn "make this faster" into a result you can defend - an experiment directory,
 a search that runs against it, and a final report where every number is
 re-derivable from a stored artifact. On platforms with native plugin support
-(Claude Code, Codex, Gemini/Antigravity, Grok, Devin) the skills load through
-the platform's own mechanism; on everything else, this file is the entry point
-and the skills work as plain instructions.
+(Claude Code, Codex, Gemini/Antigravity, Grok, Devin) - and on any client that
+implements the Agent Plugins 1.0.0 spec, which this repo conforms to - the
+skills load through the platform's own mechanism; on everything else, this file
+is the entry point and the skills work as plain instructions.
 
 ## How to operate
 

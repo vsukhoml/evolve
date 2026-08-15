@@ -83,6 +83,15 @@ enabled = ["evolve"]
 devin plugins install vsukhoml/evolve
 ```
 
+### Agent Plugins spec (any conformant client)
+
+The repo is a conformant [Agent Plugins 1.0.0](https://agent-plugins.org)
+package, so a client implementing that standard can install it with no
+vendor-specific adapter: the root `plugin.json` declares the spec schema, and
+`skills/<name>/SKILL.md` is already the layout the spec fixes for skill
+discovery. There is no `mcp.json` - the plugin ships no MCP server, and the
+skills invoke the harness directly as `python3 <file>`.
+
 ### Any other agent (instruction-only)
 
 The skills are plain markdown and the harness is stdlib Python, so no plugin

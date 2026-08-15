@@ -8,6 +8,8 @@
 #
 # Hard checks (a failure exits non-zero):
 #   - both plugin manifests parse and agree on their duplicated fields
+#   - the root plugin.json still conforms to Agent Plugins 1.0.0: closed schema,
+#     name grammar, skills discoverable at skills/<name>/SKILL.md
 #   - every .py byte-compiles
 #   - no third-party imports anywhere in the harness
 #   - the three harness entry points run clean on an empty experiment
@@ -195,6 +197,56 @@ if jq -e . .claude-plugin/plugin.json >/dev/null 2>&1 &&
     else
         fail ".agents/plugins/marketplace.json missing, unparseable, or mispointed"
     fi
+fi
+
+# ------------------------------------------ 1b. Agent Plugins 1.0.0 conformance
+# The root plugin.json is three files at once: the Antigravity marker, the target
+# of the .claude-plugin/plugin.json symlink, and the Agent Plugins 1.0.0 manifest
+# (agent-plugins.org). That third role is the strict one --- its schema is closed,
+# so a stray field that every other platform would simply ignore makes the plugin
+# invalid for every conformant client. Check the root file directly rather than
+# through the symlink: the spec fixes the location, so that is what is being read.
+step "agent-plugins"
+AP_SCHEMA="https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
+if [ "$(jq -r '."$schema" // ""' plugin.json)" = "$AP_SCHEMA" ]; then
+    pass "plugin.json declares Agent Plugins 1.0.0"
+else
+    fail "plugin.json \$schema is '$(jq -r '."$schema" // "(absent)"' plugin.json)', not $AP_SCHEMA"
+fi
+
+EXTRA=$(jq -r 'keys_unsorted - ["$schema","name","version","description","author",
+                                "homepage","repository","license","keywords",
+                                "extensions"] | join(", ")' plugin.json)
+if [ -z "$EXTRA" ]; then
+    pass "plugin.json carries only spec-allowed fields"
+else
+    fail "plugin.json has fields the closed schema rejects: $EXTRA"
+fi
+
+# 1-64 chars of [a-z0-9.-], alphanumeric at both ends, no `--` and no `..`.
+NAME=$(jq -r .name plugin.json)
+if printf '%s' "$NAME" | grep -qE '^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$' &&
+   ! printf '%s' "$NAME" | grep -qE -- '--|\.\.' &&
+   [ ${#NAME} -le 64 ]; then
+    pass "plugin name \"$NAME\" matches the spec grammar"
+else
+    fail "plugin name \"$NAME\" violates the spec grammar"
+fi
+
+# Skills are discovered at exactly one level --- skills/<name>/SKILL.md --- and a
+# conformant client MUST NOT look deeper. So a skill parked one directory too far
+# down does not fail loudly; it silently does not exist.
+DEPTH=""
+for d in skills/*/; do
+    [ -f "${d}SKILL.md" ] || DEPTH="$DEPTH ${d%/}/SKILL.md"
+done
+for f in $(find skills -mindepth 3 -name SKILL.md); do
+    DEPTH="$DEPTH $f (too deep to discover)"
+done
+if [ -z "$DEPTH" ]; then
+    pass "$(find skills -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l) skills sit at skills/<name>/SKILL.md"
+else
+    fail "skills not at the discovered depth:$DEPTH"
 fi
 
 # --------------------------------------------------------- 2. .py compiles
