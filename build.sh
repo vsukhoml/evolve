@@ -156,6 +156,27 @@ if jq -e . .claude-plugin/plugin.json >/dev/null 2>&1 &&
     fi
     rm -f /tmp/bs-manifest-diff.$$
 
+    # `.claude-plugin/plugin.json` used to be a symlink to the root manifest. It
+    # is a real file now, because the root one is also the Agent Plugins manifest
+    # and that schema is closed: sharing the file means a Claude-only key cannot
+    # be added without making the plugin invalid everywhere else. Re-symlinking
+    # would restore the trap silently, so assert the split, then assert the two
+    # copies still say the same thing.
+    if [ -L .claude-plugin/plugin.json ]; then
+        fail ".claude-plugin/plugin.json is a symlink again --- it must be a real file"
+    else
+        pass ".claude-plugin/plugin.json is a real file, not a symlink"
+    fi
+    if diff -u <(jq -S "$FIELDS" plugin.json) \
+               <(jq -S "$FIELDS" .claude-plugin/plugin.json) \
+               >/tmp/bs-plugin-diff.$$ 2>&1; then
+        pass "root and Claude plugin.json agree"
+    else
+        fail "root plugin.json and .claude-plugin/plugin.json disagree:"
+        sed 's/^/      /' /tmp/bs-plugin-diff.$$
+    fi
+    rm -f /tmp/bs-plugin-diff.$$
+
     # The marketplace refuses to install without these.
     MISSING=$(jq -r '
         [ (if has("$schema") then empty else "$schema" end),
@@ -200,12 +221,12 @@ if jq -e . .claude-plugin/plugin.json >/dev/null 2>&1 &&
 fi
 
 # ------------------------------------------ 1b. Agent Plugins 1.0.0 conformance
-# The root plugin.json is three files at once: the Antigravity marker, the target
-# of the .claude-plugin/plugin.json symlink, and the Agent Plugins 1.0.0 manifest
-# (agent-plugins.org). That third role is the strict one --- its schema is closed,
-# so a stray field that every other platform would simply ignore makes the plugin
-# invalid for every conformant client. Check the root file directly rather than
-# through the symlink: the spec fixes the location, so that is what is being read.
+# The root plugin.json is two files at once: the Antigravity marker and the Agent
+# Plugins 1.0.0 manifest (agent-plugins.org). That second role is the strict one
+# --- its schema is closed, so a stray field that every other platform would
+# simply ignore makes the plugin invalid for every conformant client. Claude's
+# copy under .claude-plugin/ is deliberately separate so it can carry keys this
+# one may not; the manifests step checks the two have not drifted apart.
 step "agent-plugins"
 AP_SCHEMA="https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
 if [ "$(jq -r '."$schema" // ""' plugin.json)" = "$AP_SCHEMA" ]; then

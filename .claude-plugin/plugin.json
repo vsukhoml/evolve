@@ -1,1 +1,21 @@
-../plugin.json
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "evolve",
+  "description": "Evolutionary code optimization with a measurement harness: design an experiment, run the search, and get a result you can verify",
+  "version": "0.1.2",
+  "author": {
+    "name": "Vadim Sukhomlinov"
+  },
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/vsukhoml/evolve",
+  "repository": "https://github.com/vsukhoml/evolve",
+  "keywords": [
+    "optimization",
+    "benchmarking",
+    "evolutionary-search",
+    "performance",
+    "experiment-design",
+    "hill-climbing",
+    "alphaevolve"
+  ]
+}
