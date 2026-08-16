@@ -14,6 +14,13 @@ objective vector, the ranking becomes noise-aware Pareto dominance, and
 `best` prints the front instead of a leaderboard. `score` stays the first
 axis either way, so every scalar tool keeps working.
 
+Two further opt-ins narrow what may be built on without touching how
+anything is ranked: `preserve_and_extend` compares a child to its parent
+case by case and stops a program that traded cases away from becoming an
+ancestor, and `promotion.confirm_before_steering` makes greedy selection
+wait for a higher-fidelity re-measurement. Both are declared in
+`experiment.json`; see the coverage section below.
+
 Only the Python standard library is used, so this runs anywhere python3 does.
 
 Usage:
@@ -24,6 +31,8 @@ Usage:
   evolve_db.py show    --experiment DIR --id ID
   evolve_db.py lineage --experiment DIR --id ID
   evolve_db.py review  --experiment DIR --id ID --verdict accept|reject|suspect [--reason TEXT]...
+  evolve_db.py confirm --experiment DIR --id ID [--score S] [--repeats N] [--cases FILE]
+  evolve_db.py label   --experiment DIR --id ID --failure-mode LABEL
   evolve_db.py stats   --experiment DIR
 """
 
@@ -178,6 +187,81 @@ def reindex_derived(db: dict, spec: dict) -> None:
 
 
 # --------------------------------------------------------------------------
+# per-case coverage: the preserve-and-extend contract
+# --------------------------------------------------------------------------
+#
+# Off unless experiment.json declares it:
+#
+#   "preserve_and_extend": {"max_regression": 0.0, "case_floor": 0.25}
+#
+# A scalar score is a sum over the benchmark, and a sum hides a trade: the
+# candidate that is 8% faster on average because it is 12% faster on four
+# inputs and 3x slower on the fifth outranks the one that is 5% faster
+# everywhere. On a single-input benchmark that cannot happen; on a suite it
+# is the normal failure, and it is invisible until someone ships the winner
+# and hears about input five.
+#
+# So when the evaluator reports `cases`, each child is compared to its parent
+# case by case: `gain` is the summed change, `regression` the summed size of
+# the losses, and a child that gave up more than `max_regression` may score,
+# rank, and be reported --- it just may not be built on. Nothing is thrown
+# away: the archive keeps it, because the edit that loses two cases here may
+# be the one that unlocks a case nothing else reaches, and its lessons are
+# worth as much as a winner's.
+#
+# `case_floor` (or per-case `case_floors`) is the noise floor of ONE case,
+# which is wider than the aggregate's --- a median over N cases averages
+# noise the individual case still carries. Only losses beyond that floor
+# count toward `regression`; summing within-floor wiggle across a large
+# suite would manufacture a regression out of nothing but sampling.
+
+
+def preserve_config(spec: dict) -> dict | None:
+    """The declared contract, or None when the experiment is aggregate-only."""
+    cfg = spec.get("preserve_and_extend")
+    return dict(cfg) if isinstance(cfg, dict) else None
+
+
+def case_floor(cfg: dict, name: str) -> float:
+    floors = cfg.get("case_floors")
+    if isinstance(floors, dict) and isinstance(floors.get(name), (int, float)):
+        return float(floors[name])
+    return float(cfg.get("case_floor") or 0.0)
+
+
+def coverage(child_cases: dict, parent_cases: dict, cfg: dict) -> dict | None:
+    """Per-case change from parent to child, or None if they share no case."""
+    shared = [k for k in parent_cases if k in child_cases]
+    if not shared:
+        return None
+    gain, regression, gained, lost = 0.0, 0.0, [], []
+    for k in shared:
+        delta = float(child_cases[k]) - float(parent_cases[k])
+        gain += delta
+        if delta > case_floor(cfg, k):
+            gained.append(k)
+        elif -delta > case_floor(cfg, k):
+            lost.append(k)
+            regression += -delta
+    # A case the parent reported and the child did not is not a tie --- it is
+    # a case whose result is unknown, and an unknown cannot be preserved.
+    dropped = [k for k in parent_cases if k not in child_cases]
+    cov = {"gain": gain, "regression": regression, "gained": gained, "lost": lost, "dropped": dropped}
+    cov["eligible"] = not dropped and regression <= float(cfg.get("max_regression") or 0.0)
+    return cov
+
+
+def eligible_parent(p: dict) -> bool:
+    """True when this program may be built on.
+
+    Programs with no coverage record pass: the seed, anything whose parent
+    reported no cases, and every program in an experiment that never declared
+    the contract. Absence of evidence is not a regression."""
+    cov = p.get("coverage")
+    return cov.get("eligible", True) if isinstance(cov, dict) else True
+
+
+# --------------------------------------------------------------------------
 # queries
 # --------------------------------------------------------------------------
 
@@ -258,6 +342,19 @@ def select_parents(db: dict, n: int, policy: str, seed: int | None = None, spec:
     starved (`evolve_report.py` reports distinct lineages) --- usually it is not
     the selection rule that is the problem but a fitness function that only
     rewards one kind of change.
+
+    Two optional filters narrow what may be built on, both declared in
+    experiment.json and both off by default:
+
+      preserve_and_extend --- a program that gave up cases its parent solved
+        is dropped from the pool entirely. It keeps its place on the
+        leaderboard and in the archive; it just stops being an ancestor, so
+        a lineage accumulates capabilities instead of trading them.
+      promotion.confirm_before_steering --- greedy draws only from programs
+        re-measured at higher fidelity (`evolve_db.py confirm`), while novel
+        keeps drawing from everything. Exploration on a promising but noisy
+        signal is cheap and reversible; exploitation of one is how a lucky
+        measurement becomes the ancestor of the next twenty candidates.
     """
     rng = random.Random(seed)
     pool = scored(db)
@@ -266,10 +363,19 @@ def select_parents(db: dict, n: int, policy: str, seed: int | None = None, spec:
         seeds = [p for p in db["programs"] if p.get("parent") is None]
         return (seeds or db["programs"])[:1] * n if db["programs"] else []
 
-    ranked = sorted(pool, key=lambda p: p["score"], reverse=True)
     spec = spec or {}
+    if preserve_config(spec):
+        # `or pool`: a contract that admits nobody is a max_regression that
+        # needs raising, not a reason to stall the run on the seed forever.
+        pool = [p for p in pool if eligible_parent(p)] or pool
+
+    steer = pool
+    if (spec.get("promotion") or {}).get("confirm_before_steering"):
+        steer = [p for p in pool if p.get("confirmed")] or pool
+
+    ranked = sorted(steer, key=lambda p: p["score"], reverse=True)
     axes = objective_axes(spec)
-    front = pareto_front(pool, spec) if axes else []
+    front = pareto_front(steer, spec) if axes else []
 
     def greedy_pick() -> dict:
         # Pareto mode: uniform over the front. Every non-dominated trade-off
@@ -323,6 +429,14 @@ def add_record(experiment: str, record: dict) -> dict:
         record.setdefault("lineage_root", record["id"])
     record.setdefault("created", now())
     record.setdefault("valid", record.get("score") is not None)
+
+    # Coverage is computed here rather than in the runner because it is the
+    # only place the parent's record is in hand.
+    cfg = preserve_config(load_spec(experiment))
+    if cfg and parent and record.get("cases"):
+        cov = coverage(record["cases"], by_id(db, parent).get("cases") or {}, cfg)
+        if cov is not None:
+            record["coverage"] = cov
 
     db["programs"].append(record)
 
@@ -444,6 +558,61 @@ def cmd_review(args) -> None:
     print(json.dumps(out))
 
 
+def cmd_confirm(args) -> None:
+    """Record a higher-fidelity re-measurement of a program.
+
+    This is what earns the right to steer: under
+    `promotion.confirm_before_steering`, greedy selection draws only from
+    confirmed programs, so a candidate can enter the archive on a cheap noisy
+    signal and still not become the ancestor of a whole branch until the
+    signal has been re-earned. The confirmation deliberately does NOT replace
+    the recorded score --- the record stays as measured, and a run whose
+    selection data quietly absorbed its own re-measurements has thrown away
+    the split-sample guarantee that makes the final number honest.
+
+    Its cases, though, DO replace the coverage record: it is the same
+    quantity measured better, and a preservation probe that re-samples the
+    parent's solved cases is the whole point of running one."""
+    db = load(args.experiment)
+    p = by_id(db, args.id)
+    entry: dict = {"repeats": args.repeats, "at": now()}
+    if args.score is not None:
+        entry["score"] = args.score
+    if args.note:
+        entry["note"] = args.note
+    if args.cases:
+        with open(args.cases, encoding="utf-8") as fh:
+            cases = json.load(fh)
+        if not isinstance(cases, dict):
+            raise SystemExit(f"{args.cases} must hold a JSON object of case-name -> score")
+        entry["cases"] = cases
+        cfg = preserve_config(load_spec(args.experiment))
+        parent = p.get("parent")
+        if cfg and parent:
+            cov = coverage(entry["cases"], by_id(db, parent).get("cases") or {}, cfg)
+            if cov is not None:
+                p["coverage"] = cov
+    p["confirmed"] = entry
+    save(args.experiment, db)
+    print(json.dumps({"id": args.id, "confirmed": entry, "coverage": p.get("coverage")}, indent=2))
+
+
+def cmd_label(args) -> None:
+    """Attach a failure-mode label to a program.
+
+    One small vocabulary across the run --- `timeout-setup`, `wrong-output`,
+    `tool-error`, `gate-failed` --- so `evolve_report.py` can name the theme
+    that dominates the whole benchmark. What that buys is a strategist brief
+    aimed at the systemic bottleneck ("setup cost dominates the timeouts;
+    invent a cheaper setup") instead of at one candidate's stack trace, which
+    is the difference between inventing a capability and patching a task."""
+    db = load(args.experiment)
+    p = by_id(db, args.id)
+    p["failure_mode"] = args.failure_mode
+    save(args.experiment, db)
+    print(json.dumps({"id": args.id, "failure_mode": args.failure_mode}))
+
+
 def cmd_reindex(args) -> None:
     """Recompute `best`/`best_score` from the records.
 
@@ -466,7 +635,11 @@ def cmd_stats(args) -> None:
     total = len(db["programs"])
     lineages = {p.get("lineage_root") or p["id"] for p in pool}
     rejected = sum(1 for p in db["programs"] if (p.get("review") or {}).get("verdict") == "reject")
-    crashed = total - len(pool) - rejected
+    # Never measured: the machine broke, not the candidate. Held apart from the
+    # crash count so the negative record does not file an untested technique as
+    # a refuted one.
+    never_measured = sum(1 for p in db["programs"] if p.get("status") == "infra_failed")
+    crashed = total - len(pool) - rejected - never_measured
     best = leaderboard(db, 1)
     since = 0
     if best:
@@ -477,6 +650,7 @@ def cmd_stats(args) -> None:
         "scored": len(pool),
         "rejected_by_review": rejected,
         "failed_or_crashed": crashed,
+        "never_measured": never_measured,
         "distinct_lineages": len(lineages),
         # Derived, not the stored pointer: a late review verdict can
         # dethrone the stored best, and stats must not report a winner
@@ -485,6 +659,13 @@ def cmd_stats(args) -> None:
         "best_score": best[0]["score"] if best else None,
         "programs_since_best": since,
     }
+    if preserve_config(spec):
+        # Counted over the scored pool: these are programs that measured fine
+        # and are simply barred from being built on, which is a different
+        # thing from a failure and must not be read as one.
+        out["ineligible_parents"] = sum(1 for p in pool if not eligible_parent(p))
+    if (spec.get("promotion") or {}).get("confirm_before_steering"):
+        out["confirmed"] = sum(1 for p in pool if p.get("confirmed"))
     if objective_axes(spec):
         front = pareto_front(pool, spec)
         out["objectives"] = objective_axes(spec)
@@ -533,6 +714,19 @@ def main() -> None:
     p.add_argument("--verdict", required=True, choices=["accept", "reject", "suspect"])
     p.add_argument("--reason", action="append", default=None, help="repeatable; one line each")
     p.set_defaults(func=cmd_review)
+
+    p = add_common(sub.add_parser("confirm", help="record a higher-fidelity re-measurement"))
+    p.add_argument("--id", required=True)
+    p.add_argument("--score", type=float, default=None, help="the confirmation score (never replaces the record's)")
+    p.add_argument("--repeats", type=int, default=None, help="repeats the confirmation was measured at")
+    p.add_argument("--cases", default=None, help="JSON file of per-case scores from the preservation probe")
+    p.add_argument("--note", default=None)
+    p.set_defaults(func=cmd_confirm)
+
+    p = add_common(sub.add_parser("label", help="attach a failure-mode label"))
+    p.add_argument("--id", required=True)
+    p.add_argument("--failure-mode", required=True, help="short kebab-case label, small shared vocabulary")
+    p.set_defaults(func=cmd_label)
 
     p = add_common(sub.add_parser("reindex", help="recompute best after hand edits to the database"))
     p.set_defaults(func=cmd_reindex)

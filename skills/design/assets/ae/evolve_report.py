@@ -124,9 +124,14 @@ def analyze(db: dict, spec: dict) -> dict:
     # Deliberate harness checks are meant to fail; counting them as crashes
     # makes a well-validated experiment look broken.
     sanity = [p for p in programs if p.get("kind") == "sanity"]
+    # The machine broke, not the candidate. These were never measured, so they
+    # are neither a failure rate nor a dead end --- counting them as either
+    # tells the run something about a program nobody actually tested.
+    infra = [p for p in programs if p.get("status") == "infra_failed"]
     failed = [
         p for p in programs
-        if not usable(p) and p not in rejected and p not in screened and p not in sanity
+        if not usable(p)
+        and p not in rejected and p not in screened and p not in sanity and p not in infra
     ]
 
     lineages = {p.get("lineage_root") or p["id"] for p in pool}
@@ -180,15 +185,27 @@ def analyze(db: dict, spec: dict) -> dict:
             )
         )
     if programs:
-        crash_pct = 100.0 * len(failed) / max(1, len(programs) - len(screened) - len(sanity))
+        evaluated = len(programs) - len(screened) - len(sanity) - len(infra)
+        crash_pct = 100.0 * len(failed) / max(1, evaluated)
         checks.append(
             (
                 "OK" if crash_pct < 25 else ("WARN" if crash_pct < 60 else "BAD"),
                 f"{crash_pct:.0f}% of evaluated candidates failed to produce a score "
-                f"({len(failed)}/{len(programs) - len(screened) - len(sanity)})",
+                f"({len(failed)}/{evaluated})",
                 "High failure rates usually mean the strategist is being asked to change "
                 "too much at once, or the evolve block does not contain enough context to "
                 "edit safely.",
+            )
+        )
+    if infra:
+        checks.append(
+            (
+                "WARN" if len(infra) < 3 else "BAD",
+                f"{len(infra)} candidate(s) were never measured (infrastructure failure)",
+                "The machine or the harness broke, not the candidates. Those strategies are "
+                "UNTESTED, not refuted --- re-score them under new ids rather than writing them "
+                "into the knowledge base as dead ends. Repeated occurrences mean fix the box "
+                "before spending more budget: every number measured beside them is suspect too.",
             )
         )
     if len(pool) >= 6:
@@ -220,6 +237,48 @@ def analyze(db: dict, spec: dict) -> dict:
                 "benchmark bigger before trusting any of this.",
             )
         )
+
+    # Preserve-and-extend mode: a program can score well and still be barred
+    # from being built on, and the run needs to know when that is happening a
+    # lot --- a pool that keeps disqualifying itself is either a max_regression
+    # set tighter than the measurement can resolve, or a strategist being asked
+    # for edits far too large to hold what the parent already had.
+    ineligible: list[dict] = []
+    if evolve_db.preserve_config(spec):
+        ineligible = [p for p in pool if not evolve_db.eligible_parent(p)]
+        if len(pool) >= 6 and len(ineligible) >= max(3, len(pool) // 3):
+            checks.append(
+                (
+                    "WARN",
+                    f"{len(ineligible)}/{len(pool)} scored program(s) gave up cases their parent held",
+                    "Either max_regression is tighter than one case can be measured to (compare it "
+                    "against case_floor), or the edits are too large --- a candidate rewriting a whole "
+                    "strategy cannot preserve what the parent solved by accident.",
+                )
+            )
+
+    # The dominant failure theme across the benchmark. Per-candidate insights
+    # answer "why did this one die"; only the aggregate answers "what is this
+    # whole run losing to", which is the question a strategist should be
+    # briefed on --- it produces a general capability rather than a patch.
+    themes: dict[str, int] = {}
+    for p in programs:
+        mode = p.get("failure_mode")
+        if isinstance(mode, str) and mode:
+            themes[mode] = themes.get(mode, 0) + 1
+    if themes:
+        labelled = sum(themes.values())
+        top_mode, top_n = max(themes.items(), key=lambda kv: kv[1])
+        if top_n >= 3 and top_n / labelled >= 0.4:
+            checks.append(
+                (
+                    "WARN",
+                    f"{top_n}/{labelled} labelled candidates failed the same way: {top_mode}",
+                    "This is a systemic bottleneck, not N unlucky candidates. Brief the next "
+                    "generation's strategists on the theme itself and ask for a capability that "
+                    "addresses it, rather than letting each one rediscover it from its own trace.",
+                )
+            )
 
     # Multi-objective mode: the front, its progress scalar, and its own
     # plateau signal. The scalar checks above still run --- score is the
@@ -256,6 +315,7 @@ def analyze(db: dict, spec: dict) -> dict:
         "failed": len(failed),
         "screened_out": len(screened),
         "sanity_checks": len(sanity),
+        "never_measured": len(infra),
         "rejected": len(rejected),
         "lineages": len(lineages),
         "best": best_id,
@@ -265,6 +325,8 @@ def analyze(db: dict, spec: dict) -> dict:
         "noise_floor": noise,
         "since_best": since_best,
         "curve": curve,
+        "ineligible_parents": len(ineligible) if evolve_db.preserve_config(spec) else None,
+        "failure_themes": themes or None,
         "objectives": axes or None,
         "front": front_ids or None,
         "front_size": len(front_ids) if axes else None,
@@ -301,8 +363,23 @@ def render(db: dict, spec: dict, stats: dict, top: int) -> str:
         head += f"  |  front {stats['front_size']} pt" + ("s" if stats["front_size"] != 1 else "")
     if stats.get("hypervolume") is not None:
         head += f"  |  HV {stats['hypervolume']:.6g}"
+    if stats.get("ineligible_parents"):
+        head += f"  |  {stats['ineligible_parents']} ineligible as parents"
     lines.append(head)
     lines.append("")
+
+    if stats.get("failure_themes"):
+        ordered = sorted(stats["failure_themes"].items(), key=lambda kv: kv[1], reverse=True)
+        lines.append("## Failure themes")
+        lines.append("")
+        for mode, count in ordered:
+            lines.append(f"- **{mode}** — {count}")
+        lines.append("")
+        lines.append(
+            f"_Brief the next generation on `{ordered[0][0]}`: it is what the run as a whole "
+            f"is losing to, and a strategist shown only its own candidate's trace cannot see it._"
+        )
+        lines.append("")
 
     if stats.get("objectives"):
         axes = stats["objectives"]
@@ -339,7 +416,10 @@ def render(db: dict, spec: dict, stats: dict, top: int) -> str:
             # empty case rather than indexing into an empty split.
             head = (p.get("strategy") or "").splitlines()
             strat = (head[0][:70] if head else "—").replace("|", "\\|")
-            lines.append(f"| {i} | `{p['id']}` | {p['score']:.6g} | {p.get('policy') or '—'} | {strat} |")
+            # A high-scoring row that nothing may be built on has to say so
+            # here: it is the row a reader would otherwise take as the winner.
+            flag = "" if evolve_db.eligible_parent(p) else " _(gave up cases)_"
+            lines.append(f"| {i} | `{p['id']}`{flag} | {p['score']:.6g} | {p.get('policy') or '—'} | {strat} |")
     lines.append("")
 
     if stats["checks"]:
@@ -356,7 +436,12 @@ def render(db: dict, spec: dict, stats: dict, top: int) -> str:
         lines.append("")
         for p in failures[-5:]:
             verdict = (p.get("review") or {}).get("verdict")
-            reason = "rejected by review" if verdict == "reject" else "no valid score"
+            if p.get("status") == "infra_failed":
+                reason = "never measured (infrastructure) — untested, not refuted"
+            elif verdict == "reject":
+                reason = "rejected by review"
+            else:
+                reason = "no valid score"
             note = (p.get("note") or "").splitlines()
             lines.append(f"- `{p['id']}` — {reason}: {note[0][:100] if note else ''}")
         lines.append("")

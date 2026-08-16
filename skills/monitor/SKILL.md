@@ -218,6 +218,13 @@ experiment directory). The design phase of the next experiment reads it first.
 Dead ends are only "the reusable half" if they land somewhere a future run will
 actually look.
 
+Carry each dead end with its **failure-mode label and how far it actually got**,
+and keep *untested* separate from *refuted*. A technique whose only candidate
+died to an `infra_failed` evaluation was never tried, and filing it beside a
+genuinely refuted one is the one mistake in this file that no later run can
+correct - the next design phase reads "dead end", does not try it, and produces
+no evidence to the contrary.
+
 Include the **policy yield**: `evolution.json` records every candidate's policy,
 so report which moves (greedy / novel / recombine / repair / simplify) produced
 the real wins and which produced the dead ends, on this problem shape. The next

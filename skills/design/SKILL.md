@@ -623,6 +623,35 @@ always queues.
 enables the dashboard's front-progress scalar; without it the front is tracked
 but its growth is not summarized.
 
+`preserve_and_extend` is optional and turns on the per-case contract - declare
+it whenever the benchmark is a **suite** rather than one input:
+
+```json
+"preserve_and_extend": {"max_regression": 0.0, "case_floor": 0.25}
+```
+
+The evaluator then emits `cases` alongside the score
+(`references/evaluator_contract.md` § *Per-case scores*), each child is compared
+to its parent case by case, and one that gave up more than `max_regression` may
+still score, rank and be reported - it just may not be built on. It buys the one
+thing an aggregate cannot: seeing that the leader won by trading four inputs
+against a fifth. `case_floor` is the noise floor of one case, which is wider
+than the aggregate's; measure it at gate check 2 alongside the aggregate floor.
+
+`promotion` is optional and is the two-speed rule:
+
+```json
+"promotion": {"confirm_before_steering": true}
+```
+
+A candidate enters the archive on whatever evidence it has, but greedy selection
+draws only from programs re-measured at higher fidelity
+(`evolve_db.py confirm`). Exploring a promising-but-noisy signal is cheap and
+reversible; *exploiting* one makes a lucky measurement the ancestor of the next
+twenty candidates. Declare it when one evaluation is noisy enough that the run
+has to screen at low repeats - a binary suite, an LLM-judged score, anything
+where `score_range` is a sizeable fraction of the effect being looked for.
+
 `repeats` defaults to 5 for anything timing-based. One sample cannot distinguish
 a 3% win from noise, and a hill-climber fed noise will climb it.
 
@@ -968,6 +997,8 @@ ______________________________________________________________________
   driver.
 - `references/numeric_accuracy.md` - the target is numeric and speed can be
   bought with precision.
+- `references/agent_harness.md` - the target is a prompt, a skill document, or
+  an agent's control flow, scored by a verifier over a task suite.
 - `references/instruments.md` - choosing what the harness measures beyond the
   timer.
 - `assets/templates/` - starting files to copy and fill in.

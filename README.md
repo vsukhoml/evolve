@@ -434,6 +434,31 @@ ______________________________________________________________________
   (`algorithmicsuperintelligence/openevolve`), Feature dimensions incl.
   complexity, double selection, the artifact side-channel, `random_seed`
   reproducibility. Design ideas only - not a backend
+- **[DarwinX](https://arxiv.org/abs/2608.07545)**, Salesforce AI Research 2026 -
+  arXiv:2608.07545, The preserve-and-extend contract behind
+  `preserve_and_extend` (per-case gain `g` and bounded regression `R`, with the
+  child kept in the archive but barred from parenthood); the two-speed
+  enter-cheap / steer-only-after-confirmation rule behind
+  `promotion.confirm_before_steering` and its preservation probe; dominant
+  failure-theme injection so the proposer invents a capability instead of
+  patching a task. Its subject - a frozen model with an evolving prompt / tool /
+  control-flow harness - is the archetype in `agent_harness.md`. The archive
+  merge operator (accept a merged child iff it covers the union of both parents'
+  solves) is **not** implemented here: it needs per-case vectors first, and the
+  paper itself reports recombination's contribution over single-lineage mutation
+  as still awaiting a controlled ablation
+- Bjarnason et al., via arXiv:2608.07545 §10, The 2.2-6.0-point pass@1 swing on
+  repeated runs of one agent on one public benchmark - the calibration in
+  `agent_harness.md` for why a single rollout per task is a coin flip
+- **[Intern-S2-Preview](https://arxiv.org/abs/2608.13505)**, Shanghai AI
+  Laboratory 2026 - arXiv:2608.13505, §4.4.2–4.4.3 only; the rest is model
+  training and does not apply to a frozen-model loop. Infrastructure failures
+  and unparseable verifier output tracked separately from genuine task failure =
+  the `infra_failed` status and its exclusion from the failure rate. Step-level
+  curation that keeps erroneous steps in context but masks them from the
+  imitation loss = negative results shown to a strategist as evidence rather
+  than as a parent to extend. Its behavior-type annotation list is the shape of
+  the default failure-mode vocabulary in `coverage_and_confirmation.md`
 
 ### Choosing among noisy candidates (→ `fitness_design.md`)
 

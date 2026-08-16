@@ -155,6 +155,17 @@ approach, score it with `--new-lineage` - otherwise it inherits the seed's
 lineage root, and the diversity metric cannot see that the population just
 widened.
 
+**On a suite benchmark, watch what selection is refusing to build on.** With
+`preserve_and_extend` declared, a candidate that gave up cases its parent solved
+keeps its score and its leaderboard row but stops being selectable as a parent -
+so a lineage accumulates capabilities instead of trading them, and the archive
+still holds the loser for its lesson and for recombination. With
+`promotion.confirm_before_steering`, greedy draws only from re-confirmed
+programs while novel draws from everything. Both are read from
+`experiment.json`, both need driving, and the failure they prevent is a lucky or
+lopsided measurement becoming the ancestor of the next twenty candidates:
+`references/coverage_and_confirmation.md`.
+
 **Spend one slot per generation repairing a promising failure.** Alongside
 "improve the best" and "try something new", give one worker the job of fixing a
 candidate that failed for a *mechanical* reason - a compile error, a missed edge
@@ -163,6 +174,14 @@ not an afterthought: failed candidates are the ones that were ambitious enough
 to break, so they carry the most headroom. Discarding them, which is what a
 naive loop does, throws away the most interesting part of the population. Skip
 the repair slot only when nothing failed for a mechanical reason.
+
+Repair is the **only** slot that gets a failure as a starting point. Every other
+strategist sees failures as evidence - the strategy, its label, the number, the
+step that broke - and never as code to extend, because a broken candidate handed
+over as a parent gets improved rather than diagnosed, and its flaw is inherited
+along with its idea. And a candidate marked `infra_failed` is not a failure at
+all: it was never measured, so re-score it under a new id rather than repairing
+something that may have been fine.
 
 **And when two lineages hold different half-wins, spend a slot recombining
 them.** Give one strategist the top program from each of two distinct lineages
@@ -352,6 +371,12 @@ promising candidate rebuilds the multiple-comparisons problem inside the stage
 meant to solve it: apply a holdout enough times and false positives stop being
 unlikely and become expected.
 
+The steering confirmation under `promotion.confirm_before_steering` is a
+different thing and does not violate that rule: it guards a *selection*
+decision, its numbers are never quoted as a result, and it may run as often as
+the budget allows. Keep the two apart in the report - which programs earned the
+right to steer, and separately what the winner scored on its holdout.
+
 In a multi-objective run the same rule reads: the owner picks the point (or two)
 they would actually ship from the front - that choice is a product judgement,
 not the run's - and only the picked points get the confirmation. The rest of the
@@ -411,6 +436,13 @@ happened, the number, and **the inference**. "Unrolling did nothing, so the loop
 is not front-end bound" is worth six candidates; "tried unrolling, no change" is
 worth none.
 
+**Label each failure while you are there**
+(`evolve_db.py label --failure-mode`), from a small vocabulary fixed at the
+start of the run. The report then names the mode that dominates the whole
+benchmark, and that theme goes into the next generation's strategist briefs - a
+strategist shown only its own parent's trace keeps proposing the local fix for a
+bottleneck spread across nine other candidates.
+
 Then refresh the dashboard:
 
 ```bash
@@ -463,7 +495,10 @@ Stop when any of these is true, and say which:
   finding, not a failure.
 
 - The failure rate is above ~60% - the harness is wrong. Fix it and restart
-  rather than spending budget on a broken measurement.
+  rather than spending budget on a broken measurement. Candidates that were
+  never measured (`infra_failed`) are excluded from that rate and are their own
+  stop signal: when the box is dropping evaluations, every number measured
+  beside them is suspect too, so fix it before spending more budget.
 
 - The best gain is inside the noise floor after a substantial budget - report
   the non-result plainly.
@@ -578,6 +613,8 @@ harness always lives outside the evolve blocks.
 
 - `references/agent_briefs.md` - spawning strategist / implementer / reviewer
   subagents; calibrating the reviewer.
+- `references/coverage_and_confirmation.md` - suite benchmarks: per-case
+  coverage, the two-speed promotion rule, failure-theme aggregation.
 - `skills/evolve/references/failure_modes.md` (the consultant skill) - a result
   looks too good.
 - `skills/evolve/references/run_diagnosis.md` (the consultant skill) - the run

@@ -62,6 +62,18 @@ INSPIRATION - top program from a different lineage (for mix-match):
 [evolve-block contents of 1–2 diverse elites, with their scores. Steal
 mechanisms, not lines.]
 
+WHAT HAS FAILED, AND HOW (evidence, not starting points):
+[one line per recent failure: the strategy, its failure-mode label, the
+number, and the specific step that broke. Do NOT paste the broken code -
+these are here to be reasoned about, not extended. A failed candidate shown
+as a program gets treated as the thing to improve, and its flaw gets
+inherited along with its idea.]
+[if the report names a dominant theme, state it as the bottleneck rather
+than the symptom: "setup cost is what most failures are spending their
+budget on - propose a capability that makes setup cheap".]
+[candidates marked never-measured are UNTESTED, not refuted. Proposing one
+of those ideas again is legitimate; say that you are doing so.]
+
 KNOWLEDGE BASE - read this before proposing anything:
 [contents of knowledge_base.md]
 

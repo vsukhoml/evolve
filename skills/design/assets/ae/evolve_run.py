@@ -20,10 +20,19 @@ Order of operations, and why:
      When experiment.json declares `objectives` (multi-objective mode), the
      evaluator additionally writes {"objectives": {axis: float, ...}} with
      every declared axis present and finite; `score` stays the first axis.
+     An evaluator over a *suite* may also write {"cases": {name: float}} ---
+     the per-case vector a scalar aggregate hides, and the only thing that
+     can tell "8% faster everywhere" from "12% faster on four inputs and
+     3x slower on the fifth". See evolve_db.py, preserve-and-extend.
   3. repeats --- for noisy measurements (anything timing-based), the
      evaluator runs `repeats` times and the median is recorded along with
      the spread. A single timing sample cannot distinguish a real 3% win
      from machine noise, and a hill-climber fed noise will happily climb it.
+
+A failure that was the MACHINE's fault, not the candidate's, is recorded
+with status "infra_failed" and kept out of the failure rate --- see
+InfrastructureFailure. The evaluator declares it with {"failure":
+"infrastructure"}; the harness never guesses.
 
 Usage:
   evolve_run.py --experiment DIR --candidate-dir DIR --id ID [--parent ID]
@@ -53,6 +62,27 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import evolve_db  # noqa: E402
 
 MAX_INSIGHT_CHARS = 8000
+
+
+class InfrastructureFailure(Exception):
+    """The measurement did not happen, as distinct from happening badly.
+
+    A candidate whose evaluator was killed by an out-of-memory event from an
+    unrelated job on the box has told the run nothing about itself, and
+    recording it beside candidates that produced wrong answers costs twice:
+    it pushes the failure-rate check toward the "the harness is wrong" stop,
+    and it writes a technique into the negative record as *refuted* when it
+    was never actually tested. A future run then avoids an idea nobody tried.
+
+    The boundary is not "did it fail" but "was the candidate the reason".
+    A timeout at the declared budget is a GENUINE failure --- the budget is
+    part of the problem statement, and a candidate too slow to finish inside
+    it has been measured. What lands here is the machine or the harness
+    breaking: the evaluator command not existing, or the evaluator itself
+    saying so.
+
+    Raised rather than threaded through the return tuples: every layer
+    between here and main() would otherwise grow a field it only forwards."""
 
 
 def load_spec(experiment: str) -> dict:
@@ -194,6 +224,8 @@ def check_gate(spec: dict, candidate_dir: str, insights: list) -> bool:
     cmd = gate if isinstance(gate, list) else ["/bin/sh", "-c", gate]
     timeout = spec.get("gate_timeout_seconds", 600)
     code, out, err, secs = run(cmd, candidate_dir, timeout)
+    if code == 127:
+        raise InfrastructureFailure(f"correctness gate command not found: {clip(err)}")
     if code != 0:
         insights.append({"label": "correctness_gate_failed", "text": clip(out + "\n" + err)})
         return False
@@ -214,7 +246,7 @@ def stages_of(spec: dict) -> list[dict]:
 
 def run_cascade(
     spec: dict, experiment: str, candidate_dir: str, insights: list, mlock: MachineLock
-) -> tuple[float | None, dict, str, dict | None]:
+) -> tuple[float | None, dict, str, dict | None, dict | None]:
     """Evaluate through stages of increasing cost, stopping at the first refusal.
 
     Most candidates are broken or obviously worse, and finding that out on a
@@ -237,18 +269,24 @@ def run_cascade(
     metrics: dict = {}
     score: float | None = None
     objectives: dict | None = None
+    cases: dict | None = None
 
     for i, stage in enumerate(stages):
         name = stage.get("name") or f"stage{i}"
         is_last = i == len(stages) - 1
         mlock.ensure(exclusive=bool(stage.get("machine_exclusive", default_exclusive)))
-        score, stage_metrics, objectives = run_stage(
+        score, stage_metrics, objectives, stage_cases = run_stage(
             stage, name, experiment, candidate_dir, insights, axes if is_last else []
         )
+        # Same rule as the score and the objectives: a screening stage's cases
+        # come from a cheaper proxy suite, and comparing a child's screen cases
+        # against a parent's full-benchmark cases would report coverage the
+        # candidate never demonstrated.
+        cases = stage_cases if is_last else None
         for k, v in stage_metrics.items():
             metrics[f"{name}.{k}" if len(stages) > 1 else k] = v
         if score is None:
-            return None, metrics, "eval_failed", None
+            return None, metrics, "eval_failed", None, None
 
         threshold = stage.get("promote_if_score_at_least")
         if not is_last and threshold is not None and score < float(threshold):
@@ -260,16 +298,16 @@ def run_cascade(
                 }
             )
             metrics["screened_out_at"] = name
-            return None, metrics, "screened_out", None
+            return None, metrics, "screened_out", None, None
 
     # The last stage's score is the candidate's score; earlier stages are
     # filters, and their cheaper, noisier numbers must never rank anything.
-    return score, metrics, "scored", objectives
+    return score, metrics, "scored", objectives, cases
 
 
 def run_stage(
     stage: dict, name: str, experiment: str, candidate_dir: str, insights: list, axes: list[str]
-) -> tuple[float | None, dict, dict | None]:
+) -> tuple[float | None, dict, dict | None, dict | None]:
     cmd = stage.get("command")
     if not cmd:
         raise SystemExit(f"evaluator stage {name!r} has no command")
@@ -280,6 +318,8 @@ def run_stage(
 
     samples: list[float] = []
     axis_samples: dict[str, list[float]] = {a: [] for a in axes}
+    case_samples: dict[str, list[float]] = {}
+    case_keys: set[str] | None = None
     metrics: dict = {}
     for i in range(repeats):
         with tempfile.NamedTemporaryFile("r+", suffix=".json", delete=False) as tmp:
@@ -295,15 +335,17 @@ def run_stage(
                 insights.append({"label": f"{name}_stdout_{i}", "text": clip(out)})
             if err.strip():
                 insights.append({"label": f"{name}_stderr_{i}", "text": clip(err)})
+            if code == 127 and not os.path.getsize(out_path):
+                raise InfrastructureFailure(f"evaluator stage {name!r} command not found: {clip(err)}")
             if code != 0 and not os.path.getsize(out_path):
                 insights.append({"label": f"{name}_evaluator_failed", "text": f"exit {code} after {secs:.1f}s"})
-                return None, metrics, None
+                return None, metrics, None, None
             try:
                 with open(out_path, encoding="utf-8") as fh:
                     result = json.load(fh)
             except (OSError, json.JSONDecodeError) as exc:
                 insights.append({"label": f"{name}_evaluator_output_unreadable", "text": f"{exc}"})
-                return None, metrics, None
+                return None, metrics, None, None
         finally:
             if os.path.exists(out_path):
                 os.unlink(out_path)
@@ -313,20 +355,28 @@ def run_stage(
                 insights.append({"label": str(ins.get("label", "insight")), "text": clip(str(ins["text"]))})
         metrics.update(result.get("metrics") or {})
 
+        # The evaluator is the only thing that can tell a candidate's fault
+        # from the machine's, because it is the only thing that knows what it
+        # was doing when it died. It says so here; the harness never guesses.
+        if result.get("failure") == "infrastructure":
+            raise InfrastructureFailure(
+                f"evaluator stage {name!r} reported an infrastructure failure on repeat {i}"
+            )
+
         score = result.get("score")
         if score is None:
             insights.append({"label": f"{name}_no_score", "text": "evaluator returned null score"})
-            return None, metrics, None
+            return None, metrics, None, None
         try:
             score = float(score)
         except (TypeError, ValueError):
             insights.append({"label": f"{name}_bad_score", "text": f"score not numeric: {score!r}"})
-            return None, metrics, None
+            return None, metrics, None, None
         # NaN and Inf are not valid JSON and will poison every downstream
         # statistic; reject them here rather than let them into the database.
         if math.isnan(score) or math.isinf(score):
             insights.append({"label": f"{name}_non_finite_score", "text": f"score was {score}"})
-            return None, metrics, None
+            return None, metrics, None, None
         samples.append(score)
 
         # Multi-objective mode: every declared axis must be present and
@@ -343,8 +393,34 @@ def run_stage(
                         "text": f"declared axis {a!r} missing or non-finite in evaluator output",
                     }
                 )
-                return None, metrics, None
+                return None, metrics, None, None
             axis_samples[a].append(v)
+
+        # Per-case scores, when the evaluator reports a suite. The key set is
+        # fixed by the first repeat and every later one must match it: a case
+        # that appears in one sample and not the next gives each case a
+        # different denominator, and the medians below would then be taken
+        # over silently different populations. Same reasoning as a partial
+        # objective vector --- a hole is a failure, not a smaller success.
+        cases = result.get("cases")
+        if i == 0:
+            case_keys = set(cases) if isinstance(cases, dict) else None
+        if (case_keys is not None) != isinstance(cases, dict) or (
+            case_keys is not None and set(cases) != case_keys
+        ):
+            insights.append(
+                {
+                    "label": f"{name}_case_set_moved",
+                    "text": "per-case scores must carry the same keys on every repeat",
+                }
+            )
+            return None, metrics, None, None
+        for k, raw in (cases or {}).items():
+            v = float(raw) if isinstance(raw, (int, float)) else math.nan
+            if math.isnan(v) or math.isinf(v):
+                insights.append({"label": f"{name}_bad_case", "text": f"case {k!r} was {raw!r}"})
+                return None, metrics, None, None
+            case_samples.setdefault(str(k), []).append(v)
 
     objectives: dict | None = None
     if axes:
@@ -352,12 +428,14 @@ def run_stage(
         if repeats > 1:
             metrics["objective_ranges"] = {a: max(vs) - min(vs) for a, vs in axis_samples.items()}
 
+    cases_out = {k: statistics.median(vs) for k, vs in case_samples.items()} or None
+
     if len(samples) > 1:
         metrics["score_samples"] = samples
         metrics["score_stdev"] = statistics.pstdev(samples)
         metrics["score_range"] = max(samples) - min(samples)
-        return statistics.median(samples), metrics, objectives
-    return samples[0], metrics, objectives
+        return statistics.median(samples), metrics, objectives, cases_out
+    return samples[0], metrics, objectives, cases_out
 
 
 def main() -> None:
@@ -437,21 +515,29 @@ def main() -> None:
     _exp_lock = acquire_experiment_lock(args.experiment)  # noqa: F841
     mlock = MachineLock()
 
-    if args.skip_gate:
-        insights.append({"label": "correctness_gate", "text": f"SKIPPED: {args.note or 'no reason given'}"})
-    else:
-        # The gate is untimed (pass/fail), so it runs shared: parallel with
-        # other untimed work, never during someone's exclusive measurement.
-        mlock.ensure(exclusive=False)
-        if not check_gate(spec, args.candidate_dir, insights):
-            valid = False
-
     metrics: dict = {}
     objectives: dict | None = None
-    status = "gate_failed" if not valid else "pending"
-    if valid:
-        score, metrics, status, objectives = run_cascade(spec, args.experiment, args.candidate_dir, insights, mlock)
-        valid = score is not None
+    cases: dict | None = None
+    status = "pending"
+    try:
+        if args.skip_gate:
+            insights.append({"label": "correctness_gate", "text": f"SKIPPED: {args.note or 'no reason given'}"})
+        else:
+            # The gate is untimed (pass/fail), so it runs shared: parallel with
+            # other untimed work, never during someone's exclusive measurement.
+            mlock.ensure(exclusive=False)
+            if not check_gate(spec, args.candidate_dir, insights):
+                valid = False
+                status = "gate_failed"
+
+        if valid:
+            score, metrics, status, objectives, cases = run_cascade(
+                spec, args.experiment, args.candidate_dir, insights, mlock
+            )
+            valid = score is not None
+    except InfrastructureFailure as exc:
+        insights.append({"label": "infrastructure_failure", "text": str(exc)})
+        valid, status = False, "infra_failed"
     mlock.release()
 
     strategy = ""
@@ -463,7 +549,7 @@ def main() -> None:
     os.makedirs(gen_dir, exist_ok=True)
     with open(os.path.join(gen_dir, "evaluation.json"), "w", encoding="utf-8") as fh:
         json.dump(
-            {"score": score, "objectives": objectives, "valid": valid, "status": status,
+            {"score": score, "objectives": objectives, "cases": cases, "valid": valid, "status": status,
              "metrics": metrics, "insights": insights},
             fh, indent=2,
         )
@@ -488,6 +574,8 @@ def main() -> None:
     }
     if objectives is not None:
         record["objectives"] = objectives
+    if cases is not None:
+        record["cases"] = cases
     if args.sanity:
         record["kind"] = "sanity"
     if args.new_lineage:
@@ -533,6 +621,23 @@ def main() -> None:
         ):
             marker = "  <-- new best (within noise of previous best --- not yet a claim)"
     print(f"{args.id}: score={shown}  best={best if best is None else f'{best:.6g}'}{marker}")
+    # A candidate can beat its parent on the aggregate while giving up whole
+    # cases, and that trade is invisible in every number printed above ---
+    # which is the entire reason the per-case vector exists. Say it here, at
+    # the moment the number lands, or it will only ever be found by someone
+    # reading the database.
+    cov = evolve_db.by_id(db, args.id).get("coverage") or {}
+    if cov.get("lost") or cov.get("dropped"):
+        gave_up = ", ".join((cov.get("lost") or []) + [f"{k} (not reported)" for k in cov.get("dropped") or []])
+        held = "" if cov.get("eligible", True) else " --- not eligible as a parent"
+        print(f"  gave up: {gave_up}  (regression {cov.get('regression', 0):.6g}){held}", file=sys.stderr)
+    if status == "infra_failed":
+        print(
+            "  the measurement did not happen --- this says nothing about the candidate. "
+            "Fix the machine or the harness and re-score it under a NEW id; do not record "
+            "its strategy as a dead end.",
+            file=sys.stderr,
+        )
     if not valid:
         labels = ", ".join(i["label"] for i in insights)
         print(f"  failure insights: {labels}", file=sys.stderr)

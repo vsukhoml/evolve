@@ -35,6 +35,36 @@ Exit code is advisory; the JSON is authoritative. Write the file even on
 failure, with `"score": null` and an insight explaining what happened. An
 evaluator that dies without writing leaves the loop guessing.
 
+## Say when the failure was not the candidate's fault
+
+```json
+{"score": null, "failure": "infrastructure", "insights": [{"label": "oom", "text": "..."}]}
+```
+
+The harness records that as `infra_failed`, keeps it out of the failure rate,
+and tells the run the strategy is **untested rather than refuted**. Both halves
+matter. A candidate killed by an unrelated job's OOM pushes the failure-rate
+check toward its "the harness is wrong" stop, and - worse - the technique it was
+carrying gets written into the knowledge base as a dead end, so a future run
+avoids an idea nobody ever tried. That is the most expensive kind of wrong entry
+there is, because nothing later in the run can contradict it.
+
+The boundary is not "did it fail" but **"was the candidate the reason"**:
+
+- **Infrastructure** - out of memory or disk from something else on the box, a
+  missing toolchain, a dependency mirror that went down, a device that
+  disappeared, a container that could not start.
+- **Not infrastructure** - a timeout at the declared budget. The budget is part
+  of the problem statement, so a candidate too slow to finish inside it has been
+  measured, and it failed. Likewise a build error, a crash, or a wrong answer:
+  all of those are the candidate.
+
+The evaluator is the only component that can tell these apart, because it is the
+only one that knows what it was doing when it died. Say it explicitly - the
+harness detects only the two cases it can know for itself (the gate command or
+the evaluator command not existing) and never guesses from an exit code or a
+stderr pattern.
+
 ## Multi-objective experiments
 
 When `experiment.json` declares an objective tuple:
@@ -78,6 +108,64 @@ the evaluator additionally writes every declared axis:
   plain dominance is enough. If an experiment genuinely needs crowding or
   tournament selection, implement it in that experiment's own harness, after the
   owner confirms the extra moving parts are wanted.
+
+## Per-case scores, when the benchmark is a suite
+
+A scalar score is a sum over the benchmark, and a sum hides a trade. The
+candidate that is 8% faster *on average* because it is 12% faster on four inputs
+and 3x slower on the fifth outranks the one that is 5% faster everywhere, and
+nothing in the leaderboard says so. On a single-input benchmark that cannot
+happen. On a suite it is the normal failure, and it stays invisible until the
+winner ships and someone reports input five.
+
+So when the evaluator scores a suite, emit the vector beside the aggregate:
+
+```json
+{
+  "score": 1.34,
+  "cases": {"sparse_1k": 1.51, "dense_1k": 1.22, "adversarial": 0.98},
+  "metrics": {"...": "..."}
+}
+```
+
+- Each case is **higher is better**, same convention as everything else, and
+  finite. A case that appears in one repeat and not the next fails the whole
+  evaluation - the medians would be taken over different populations.
+- The case set must be **fixed by the experiment, not chosen by the candidate**.
+  A candidate that can shrink the suite will: dropping the case it loses raises
+  the mean, which is a benchmark game that looks exactly like a win.
+- In a cascade only the **last** stage's cases count. A screening stage measures
+  a cheaper proxy suite, and comparing a child's screen cases against a parent's
+  full-benchmark cases reports coverage the candidate never demonstrated.
+- Binary suites (solved / not solved) are the degenerate case: values 0 and 1, a
+  `case_floor` of 0. This is the shape an agent or prompt experiment has.
+
+Declare the contract in `experiment.json` to make the harness act on it:
+
+```json
+"preserve_and_extend": {"max_regression": 0.0, "case_floor": 0.25}
+```
+
+Then each child is compared to its parent case by case, and one that gave up
+more than `max_regression` **may still score, rank, and be reported - it just
+may not be built on**. That split is the whole design. The archive keeps it,
+because the edit that loses two cases here may be the only one that reaches a
+case nothing else does, and its lesson is worth as much as a winner's; but a
+lineage that can trade cases away accumulates nothing, and the run wanders
+sideways while the leaderboard climbs.
+
+`case_floor` is the noise floor of **one case**, which is wider than the
+aggregate's - a median over N cases averages away noise the individual case
+still carries. Measure it the same way you measure the aggregate floor, on
+repeated runs of identical source, and set `case_floors` per case where they
+differ by more than a factor of two. Only losses beyond the floor count toward
+the regression; summing within-floor wiggle across a large suite manufactures a
+regression out of pure sampling.
+
+A case the parent reported and the child did not is not a tie. It is a case
+whose result is unknown, and an unknown cannot be preserved - the harness treats
+a dropped case as an automatic disqualification from parenthood, whatever the
+aggregate says.
 
 ## The three rules that are not negotiable
 
