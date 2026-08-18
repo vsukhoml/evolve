@@ -515,6 +515,24 @@ carrying textbook anti-patterns is confounded - part of its "win" is a fix any
 structure would have enjoyed - and the loop otherwise spends agent turns
 rediscovering what a checklist already knew.
 
+**The one place this search costs you is novelty.** Prior art raises the floor
+and lowers the ceiling. A small published study (provenance in the README) put
+the same problems to the same models twice - once with a paragraph forbidding
+search for a solution to the exact problem, once without. Allowed to search, a
+model returned the known good algorithm on all six problems where one existed;
+forbidden, it did so on very few. But on one problem the same model returned
+that known algorithm *instead of* the genuinely new construction it had produced
+under the strict prompt - the prior art was good enough to stop the search.
+Both prompts still allowed lookups for standard background and named results;
+only the solution itself was off limits.
+
+So search during design, always - you want the floor, and on almost every
+optimization target the known best is the thing to beat. But if the run's goal
+is a construction nobody has published rather than a faster version of something
+known, brief one strategist lane without the prior art (mechanics in the runner
+skill). That study is one run per cell and twenty evaluations per model: a case
+worth designing around, not a measured effect.
+
 ### Pre-register the interpretation
 
 Before any code, write down what each possible outcome will mean - what counts

@@ -209,6 +209,19 @@ prose looks four times more complex than it is. Comments are explicitly out of
 scope, to be rewritten to match whatever survives. If the simplification is real
 the prose shrinks on its own, because there is less to explain.
 
+**If the goal is a construction nobody has published, keep one lane blind to the
+prior art.** Same study as the design skill's caveat on literature search
+(provenance in the README): a model allowed to look up existing work returned
+the known good algorithm on all six problems where one existed - and on one of
+them returned it *instead of* the better construction the same model found when
+the lookup was forbidden. Brief that lane from the objective, the invariants and
+the knowledge base, but omit `seed_strategies.md`; the knowledge base still goes
+in, because it is what this run measured rather than what someone else
+published. Check its proposal against the prior art after it is proposed, not
+before. Spend this slot only when novelty is the point - on a run whose goal is
+beating a known implementation, withholding the prior art just buys a slower
+rediscovery of it.
+
 **Weight the slot mix with the cross-experiment `lessons.md`.** Every candidate
 records its policy, so past runs know which moves actually produced real wins on
 similar problems - "recombine earned 2 of 3 wins on parser-shaped problems"

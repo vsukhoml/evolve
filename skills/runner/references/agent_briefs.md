@@ -79,6 +79,9 @@ KNOWLEDGE BASE - read this before proposing anything:
 
 SEED STRATEGIES:
 [contents of seed_strategies.md]
+[omit this whole section for a search-blind lane - see the runner skill. The
+knowledge base above still goes in: it is what this run measured, not what
+someone else published.]
 
 CURRENT LEADERBOARD:
 [top 5 from evolve_db.py best]
@@ -100,6 +103,15 @@ fail? Is anything like it already in the knowledge base? Is the expected
 effect above the noise floor - would a win even be visible? Revise once,
 then commit. A strategy improves more per token in reflection than in
 length.
+
+**Return a strategy.** Not a report that everything so far has failed, not a
+restatement of the parent, not a proposal whose real content is that someone
+else should measure something first. In particular, work moved out of the timed
+region - into setup, into the caller, into a precomputation nobody pays for - is
+the same cost under new ownership, and the versions of it the harness fails to
+catch are worse than the ones it does. If this parent is genuinely exhausted,
+say so in one line under **Risk** and spend the slot on the most promising
+structurally different thing you can name instead.
 
 Return exactly this, and nothing else:
 

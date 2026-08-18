@@ -706,6 +706,22 @@ evidence is here.
   is the design skill's "verify what you cite; do not recall it". Also
   recommends calibration (confidence matching actual correctness) and
   human-in-the-loop over full autonomy
+- **[Can LLMs be Used to Simplify Algorithms?](https://arxiv.org/abs/2608.10753)**,
+  El-Hayek, Henzinger & Zheng 2026 - arXiv:2608.10753, The counterweight to the
+  bullet above. Ten theory papers put to three models under two prompts, one of
+  which forbade searching for a solution to the exact problem while still
+  allowing lookups for standard background. With search allowed, one model
+  returned the known simpler algorithm on all six problems where one existed,
+  and on very few without it - but on one problem it returned that known
+  algorithm *instead of* the novel improvement the same model produced under the
+  strict prompt. Hence the design skill's "the one place this search costs you
+  is novelty" and the runner's search-blind lane: prior art raises the floor and
+  lowers the ceiling. One run per cell and 20 evaluations per model, disclaimed
+  by its own authors as case studies rather than measured effect. The prompt's
+  closing prohibition - no partial reductions, do not return because current
+  approaches fail, do not reduce to an equally difficult problem - is the
+  strategist brief's "return a strategy"; that models still gave up on 2 of 20
+  problems each is why the clause is not trusted to be sufficient
 
 ### Read but not yet drawn on
 
